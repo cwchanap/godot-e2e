@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build version `0.1.0` of a standalone Godot addon that lets GdUnit4 GDScript tests launch and control a separate Godot game process through a localhost automation protocol.
+**Goal:** Build version `0.1.0` of a standalone Godot addon that lets GdUnit4 GDScript tests launch and control a separate Godot game process through the pinned GodotE2E wire/server behavior.
 
-**Architecture:** GdUnit4 remains the only test runner, assertion library, lifecycle framework, and reporter. The addon adapts the Apache-2.0 `godot-e2e` GDScript server, adds a non-blocking GDScript TCP client and child-process launcher, and exposes a small `GdUnitE2EGame` API plus optional `GdUnitE2ETestSuite` convenience base.
+**Architecture:** GdUnit4 remains the only runner/assertion/lifecycle/reporting framework. The addon adapts the pinned Apache-2.0 GodotE2E GDScript server with minimal behavioral changes, adds a non-blocking in-tree GDScript TCP client and child-process Node, and exposes a small `GdUnitE2EGame` facade plus `GdUnitE2ETestSuite` convenience base.
 
 **Tech Stack:** Godot 4.5+, GDScript, GdUnit4 6.x, localhost TCP, four-byte big-endian length-prefixed JSON, GitHub Actions, Xvfb on Linux.
 
@@ -12,22 +12,28 @@
 
 ## Global Constraints
 
-- Deliver planning and implementation through one feature PR after this planning branch is promoted; keep task-level commits inside that PR.
+- Deliver planning and implementation through this one feature PR; keep task-level commits inside it.
 - Target Godot 4.5 or newer.
-- Use GdUnit4 6.x; development scripts may pin one known-good 6.x release for deterministic CI.
+- Use GdUnit4 6.x; bootstrap scripts pin one known-good 6.x release.
 - Product runtime code is GDScript; Python and pytest are not runtime dependencies.
-- Bind the child automation server only to `127.0.0.1`.
-- Activate the server only with `--gdunit-e2e`.
-- Preserve protocol version `1`, useful upstream command names, and four-byte big-endian JSON framing.
-- Enforce a 16 MiB frame limit.
-- Permit one in-flight command per client in the MVP.
-- Use only public GdUnit4 APIs: `GdUnitTestSuite`, lifecycle hooks, `fail()`, `is_failure()`, assertions, and the CLI.
-- Keep GdUnit4 external; do not include it in release artifacts.
-- Preserve Apache-2.0 attribution for adapted `godot-e2e` files.
-- Use upstream commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36` as the immutable adaptation baseline.
+- Bind the child server only to `127.0.0.1`.
+- Activate only with `--gdunit-e2e`.
+- Treat `RandallLiuXin/godot-e2e` commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36` as the immutable server/wire baseline.
+- Preserve four-byte big-endian JSON framing and upstream `_t` serializer tags; do not add `__godot_type` or a new success/error envelope.
+- Keep the pinned upstream command-handler surface; only the high-level wrapper surface is intentionally small.
+- Keep `protocol_version: 1` on hello for compatibility, but do not add server-side protocol-version validation in this MVP.
+- Enforce a 16 MiB frame limit by rejecting/closing, not by inventing a new wire error envelope.
+- Permit one in-flight command per client.
+- Use `DEFAULT_COMMAND_TIMEOUT_SECONDS = 5.0` and `WAIT_MARGIN_SECONDS = 1.0`; wrappers for server waits must give the client a later deadline.
+- `E2EProcess` and `E2EClient` are Nodes and must be inside the active SceneTree while they poll.
+- Launch redirected pipes with `OS.execute_with_pipe(..., false)` and never live-read child stdout/stderr on the test runner main thread.
+- Use only public GdUnit4 APIs: `GdUnitTestSuite`, lifecycle hooks, `fail()`, `is_failure()`, assertions, and CLI.
+- `fail()` records failure but does not abort GDScript execution; examples and helpers must return when dependent work cannot continue.
+- Keep GdUnit4 external and exclude it from release archives.
+- Preserve Apache-2.0 attribution on adapted upstream files.
 - Validate Linux and Windows in CI; macOS and Godot .NET compatibility are follow-ups.
-- Do not add locators, retrying expectations, parallel sessions, video, an editor panel, or a new test runner.
-- Follow RED → GREEN → REFACTOR for each task.
+- Do not add locators, retrying expectations, process pools, video, editor UI, or a new test runner.
+- Follow RED → GREEN → REFACTOR at each task boundary.
 
 ## Planned File Structure
 
@@ -67,9 +73,6 @@
 └── tests/
     ├── helpers/fake_e2e_server.gd
     ├── fixtures/minimal/
-    │   ├── project.godot
-    │   ├── main.tscn
-    │   └── main.gd
     ├── unit/
     └── integration/
 ```
@@ -91,13 +94,13 @@
 - Create: `tests/unit/addon_manifest_test.gd`
 
 **Interfaces:**
-- Produces addon path `res://addons/gdunit_e2e`.
-- Produces autoload name `GdUnitE2EAutomationServer` pointing at `res://addons/gdunit_e2e/server/automation_server.gd` once the server exists.
-- Produces deterministic local/CI GdUnit4 bootstrap without committing `addons/gdUnit4`.
+- Addon path: `res://addons/gdunit_e2e`.
+- Autoload: `GdUnitE2EAutomationServer` → `res://addons/gdunit_e2e/server/automation_server.gd` once Task 3 supplies it.
+- GdUnit4 stays external at `res://addons/gdUnit4`.
 
-- [ ] **Step 1: Add repository metadata and ignore generated content**
+- [ ] **Step 1: Add repository metadata and generated-file ignores**
 
-Use a root `project.godot` with a small 640×360 GL compatibility window and ignore:
+Use:
 
 ```gitignore
 .godot/
@@ -109,9 +112,11 @@ dist/
 *.port
 ```
 
-- [ ] **Step 2: Add Apache-2.0 licensing and upstream NOTICE**
+Use a minimal root `project.godot` with a 640×360 GL Compatibility window.
 
-`NOTICE` must identify the adapted upstream project and immutable source commit:
+- [ ] **Step 2: Add Apache-2.0 licensing and immutable upstream attribution**
+
+`NOTICE` contains:
 
 ```text
 godot-e2e (this repository)
@@ -122,11 +127,11 @@ licensed under the Apache License 2.0.
 Reference commit: ae6219f6e758a0f29bd243c8f963417fe4d63c36
 ```
 
-- [ ] **Step 3: Add GdUnit4 bootstrap scripts**
+- [ ] **Step 3: Add deterministic GdUnit4 bootstrap scripts**
 
-Both scripts install only upstream `addons/gdUnit4` into the local project and exit successfully when it is already present. Pin one known-good GdUnit4 6.x tag in both scripts; keep the version in one obvious constant per script.
+Both scripts install only `addons/gdUnit4`, use the same pinned 6.x release, and exit successfully when that addon already exists.
 
-- [ ] **Step 4: Write the failing addon manifest test**
+- [ ] **Step 4: Write the manifest RED test**
 
 ```gdscript
 extends GdUnitTestSuite
@@ -145,13 +150,11 @@ Run:
 ./addons/gdUnit4/runtest.sh -a tests/unit/addon_manifest_test.gd
 ```
 
-Expected: FAIL because the addon manifest does not yet exist.
+Expected: FAIL because the manifest is absent.
 
-- [ ] **Step 5: Add the minimal plugin manifest/editor plugin and rerun**
+- [ ] **Step 5: Add the minimal plugin and rerun GREEN**
 
-The editor plugin should only register/unregister the autoload. Do not add docks, settings pages, or other editor UX.
-
-Expected: PASS.
+The editor plugin only registers/unregisters the autoload. No docks/settings/editor UX.
 
 - [ ] **Step 6: Commit**
 
@@ -162,7 +165,7 @@ git commit -m "chore: establish gdunit e2e addon baseline"
 
 ---
 
-## Task 2: Implement protocol framing and Variant serialization
+## Task 2: Extract upstream-compatible framing and Variant serialization
 
 **Files:**
 - Create: `addons/gdunit_e2e/protocol/e2e_protocol.gd`
@@ -177,63 +180,59 @@ git commit -m "chore: establish gdunit e2e addon baseline"
 class_name E2EProtocol
 const PROTOCOL_VERSION := 1
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
+const DEFAULT_COMMAND_TIMEOUT_SECONDS := 5.0
+const WAIT_MARGIN_SECONDS := 1.0
 
 class_name E2EFraming
 static func encode_json(message: Dictionary) -> PackedByteArray
 static func try_extract(buffer: PackedByteArray) -> Dictionary
-# returns {"complete": bool, "message": Dictionary, "remaining": PackedByteArray, "error": String}
+# {"complete": bool, "message": Dictionary, "remaining": PackedByteArray, "error": String}
 
 class_name E2ESerializer
 static func serialize(value: Variant) -> Variant
 static func deserialize(value: Variant) -> Variant
 ```
 
-- [ ] **Step 1: Write framing tests first**
+- [ ] **Step 1: Write framing RED tests from the pinned server behavior**
 
-Cover:
+Cover four-byte big-endian length, UTF-8 JSON, partial header/body, two concatenated frames, and declared payload over 16 MiB.
 
-1. header is four-byte big-endian length;
-2. UTF-8 payload round-trip;
-3. incomplete header returns `complete=false`;
-4. incomplete body returns `complete=false` without consuming bytes;
-5. two concatenated frames leave the second in `remaining`;
-6. a declared payload over 16 MiB returns `frame_too_large`.
-
-Run:
-
-```bash
-./addons/gdUnit4/runtest.sh -a tests/unit/protocol_test.gd
+```gdscript
+func test_frame_prefix_is_big_endian_payload_size() -> void:
+    var frame := E2EFraming.encode_json({"id": 1, "action": "node_exists"})
+    var declared := (frame[0] << 24) | (frame[1] << 16) | (frame[2] << 8) | frame[3]
+    assert_int(declared).is_equal(frame.size() - 4)
 ```
 
-Expected: FAIL because `E2EFraming` does not exist.
+Run the test and confirm RED because helpers do not exist.
 
-- [ ] **Step 2: Implement the smallest framing parser and make the tests pass**
+- [ ] **Step 2: Implement framing with no new wire envelopes**
 
-Do not add compression, streaming JSON, checksums, or alternate framing.
+An oversized local outbound frame returns a local parser/client failure. An oversized received declaration causes the peer to close. Do not emit a new `frame_too_large` JSON response.
 
-- [ ] **Step 3: Write serializer tests using the upstream wire tags**
+- [ ] **Step 3: Write serializer RED tests using exact upstream `_t` tags**
 
-Cover primitives plus the upstream supported Godot value shapes:
+Cover primitives and:
 
 ```text
-Vector2 / Vector2i
-Vector3 / Vector3i
-Rect2 / Rect2i
-Color
-Transform2D
-NodePath
-Array / Dictionary
-PackedVector2Array
-PackedFloat32Array
-PackedInt32Array
-PackedStringArray
+Vector2 / Vector2i -> v2 / v2i
+Vector3 / Vector3i -> v3 / v3i
+Rect2 / Rect2i     -> r2 / r2i
+Color              -> col
+Transform2D        -> t2d
+NodePath           -> np
+unknown            -> _unknown
 ```
 
-Unknown values remain tagged diagnostic dictionaries rather than causing the serializer to crash.
+Also cover arrays/dictionaries and upstream supported packed arrays.
 
-- [ ] **Step 4: Implement the serializer by adapting the pinned upstream `json_serializer.gd` behavior**
+- [ ] **Step 4: Adapt `json_serializer.gd` behavior and rerun GREEN**
 
-Preserve its `_t` tags (`v2`, `v2i`, `v3`, `v3i`, `r2`, `r2i`, `col`, `t2d`, `np`, `_unknown`) for protocol compatibility.
+Do not add `__godot_type`; serialized `Vector2(32, 64)` must be exactly shaped as:
+
+```json
+{"_t":"v2","x":32.0,"y":64.0}
+```
 
 - [ ] **Step 5: Run protocol + serializer tests**
 
@@ -247,18 +246,19 @@ Expected: PASS.
 
 ```bash
 git add addons/gdunit_e2e/protocol tests/unit/protocol_test.gd tests/unit/serializer_test.gd
-git commit -m "feat: add e2e protocol primitives"
+git commit -m "feat: add upstream-compatible e2e protocol primitives"
 ```
 
 ---
 
-## Task 3: Adapt the child automation server
+## Task 3: Adapt the pinned child automation server without shrinking its command surface
 
 **Files:**
 - Create: `addons/gdunit_e2e/server/config.gd`
 - Create: `addons/gdunit_e2e/server/log_capture.gd`
 - Create: `addons/gdunit_e2e/server/command_handler.gd`
 - Create: `addons/gdunit_e2e/server/automation_server.gd`
+- Modify: `addons/gdunit_e2e/plugin.gd`
 - Create: `tests/unit/config_test.gd`
 - Create: `tests/unit/command_handler_test.gd`
 - Create: `tests/integration/automation_server_test.gd`
@@ -268,13 +268,15 @@ git commit -m "feat: add e2e protocol primitives"
 ```gdscript
 class_name GdUnitE2EConfig
 static func is_enabled() -> bool
+static func is_valid() -> bool
+static func get_validation_error() -> String
 static func get_port() -> int
 static func get_port_file() -> String
 static func get_token() -> String
 static func get_log_verbosity() -> String
 ```
 
-Server launch flags:
+Flags:
 
 ```text
 --gdunit-e2e
@@ -284,70 +286,84 @@ Server launch flags:
 --gdunit-e2e-log-verbosity=<error|warning|info>
 ```
 
-- [ ] **Step 1: Write config parsing tests**
+- [ ] **Step 1: Write strict config RED tests**
 
-Test disabled-by-default behavior, each flag, invalid port fallback, and invalid verbosity fallback.
-
-Expected first run: FAIL.
-
-- [ ] **Step 2: Adapt upstream config with renamed flags**
-
-Keep parsing small and based on `OS.get_cmdline_user_args()`.
-
-- [ ] **Step 3: Write command-handler tests before copying behavior**
-
-Cover the MVP commands:
+Assert disabled-by-default and valid flags. Then assert these are invalid and do not fall back:
 
 ```text
-node_exists
-get_property
-set_property
-call_method
-get_tree
-input_key
-input_action
-input_mouse_button
-click_node
-wait_process_frames
-wait_physics_frames
-wait_seconds
-wait_for_node
-wait_for_signal
-wait_for_property
-get_scene
-change_scene
-reload_scene
-screenshot
-quit
+--gdunit-e2e-port=abc
+--gdunit-e2e-port=70000
+--gdunit-e2e-port=0 without a port file
+--gdunit-e2e-log-verbosity=verbose
 ```
 
-Use a tiny test scene and assert command result dictionaries/deferred wait descriptors.
+`is_enabled()` may remain true because the flag was present, but `is_valid()` must be false and `get_validation_error()` non-empty.
 
-- [ ] **Step 4: Adapt the pinned upstream command handler and serializer references**
+- [ ] **Step 2: Adapt upstream config with renamed flags and fail-closed automation startup**
 
-Remove commands that are not part of the MVP unless they are required internally. Preserve upstream command names/parameter shapes for included commands.
+`automation_server._ready()` uses:
+
+```gdscript
+if not GdUnitE2EConfig.is_enabled():
+    set_process(false)
+    set_physics_process(false)
+    return
+if not GdUnitE2EConfig.is_valid():
+    push_error("godot-e2e: %s" % GdUnitE2EConfig.get_validation_error())
+    set_process(false)
+    set_physics_process(false)
+    return
+```
+
+- [ ] **Step 3: Write command-handler characterization RED tests for the retained upstream surface**
+
+Characterize, without rewriting semantics:
+
+```text
+node_exists get_property set_property call_method
+find_by_group query_nodes find_nodes node_actionable get_tree batch
+input_key input_action input_mouse_button input_mouse_motion click_node hover_node
+wait_process_frames wait_physics_frames wait_seconds
+wait_for_node wait_for_signal wait_for_property
+get_scene change_scene reload_scene
+screenshot set_log_verbosity set_log_buffer_size quit
+```
+
+Pin representative exact payloads, including plain missing-node error text and `_t` serialized property values.
+
+- [ ] **Step 4: Adapt the pinned command handler intact**
+
+Keep commands that are not wrapped by `GdUnitE2EGame`. `send_command()` is the raw escape hatch, so deleting those commands only increases fork maintenance.
 
 - [ ] **Step 5: Adapt log capture**
 
-Keep the bounded ring buffer and response-delta model. Do not add flood detection in this PR.
+Keep the upstream bounded ring buffer and `_logs` / `_logs_dropped` response deltas. Do not add engine-error-flood detection.
 
-- [ ] **Step 6: Adapt the automation server**
+- [ ] **Step 6: Adapt the automation server with only documented differences**
 
-Required differences from upstream:
+Differences from upstream:
 
-- class/autoload naming uses `GdUnitE2E`;
-- only `--gdunit-e2e` activates it;
-- listen explicitly on `127.0.0.1`;
-- handshake also validates `protocol_version == 1`;
-- framing uses the shared `E2EFraming`/protocol constants;
-- payload limit is 16 MiB;
-- only one client and one in-flight command are supported.
+```text
+GdUnitE2E names
+renamed --gdunit-e2e flags
+listen only on 127.0.0.1
+shared E2EFraming / E2EProtocol constants
+16 MiB receive/send cap via disconnect/reject
+```
 
-- [ ] **Step 7: Add the real server integration test**
+Keep token-first hello behavior. The client sends `protocol_version: 1`, but the server does not add a new protocol-version validation branch.
 
-Launch a test server-enabled project, connect a raw `StreamPeerTCP`, send `hello`, assert successful handshake, then verify an invalid token is rejected.
+- [ ] **Step 7: Add real server integration tests**
 
-- [ ] **Step 8: Run the server slice**
+Connect raw `StreamPeerTCP` to the child and verify:
+
+1. hello with the correct token succeeds;
+2. hello response contains upstream-style `ok`, `godot_version`, and `server_version` fields;
+3. wrong token disconnects;
+4. non-hello first command disconnects;
+5. invalid startup config never creates a listening server.
+
+- [ ] **Step 8: Run server slice**
 
 ```bash
 ./addons/gdUnit4/runtest.sh \
@@ -361,13 +377,13 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add addons/gdunit_e2e/server tests/unit/config_test.gd tests/unit/command_handler_test.gd tests/integration/automation_server_test.gd
-git commit -m "feat: add child automation server"
+git add addons/gdunit_e2e/server addons/gdunit_e2e/plugin.gd tests/unit/config_test.gd tests/unit/command_handler_test.gd tests/integration/automation_server_test.gd
+git commit -m "feat: adapt upstream child automation server"
 ```
 
 ---
 
-## Task 4: Implement the non-blocking GDScript client
+## Task 4: Implement the in-tree non-blocking GDScript client
 
 **Files:**
 - Create: `addons/gdunit_e2e/client/e2e_result.gd`
@@ -380,53 +396,83 @@ git commit -m "feat: add child automation server"
 
 ```gdscript
 class_name E2EResult
+extends RefCounted
 var ok: bool
 var value: Variant
-var error_code: String
 var message: String
 var logs: Array
 
 class_name E2EClient
 extends Node
 
-func connect_to_server(host: String, port: int, token: String, timeout_seconds := 5.0) -> E2EResult
-func send_command(action: String, parameters := {}, timeout_seconds := 5.0) -> E2EResult
+func connect_to_server(port: int, token: String, timeout_seconds := E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS) -> E2EResult
+func send_command(action: String, parameters := {}, timeout_seconds := E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS) -> E2EResult
 func close() -> void
 func is_connected() -> bool
 func reset_collected_logs() -> void
 func get_collected_logs() -> Array
 ```
 
-- [ ] **Step 1: Build a deterministic fake server helper**
+`connect_to_server()` hardcodes `127.0.0.1`; there is no `host` parameter in the MVP.
 
-The fake server should accept one connection, decode the same framing, and let tests queue specific responses. It must not know GdUnit internals.
+- [ ] **Step 1: Build an in-tree deterministic fake server helper**
+
+The fake server extends `Node`, listens on loopback, uses `E2EFraming`, and queues exact response dictionaries. Client tests add both fake server and client under the test suite before awaiting network work.
 
 - [ ] **Step 2: Write client RED tests**
 
 Cover:
 
-- connection and hello handshake;
+- correct-token hello with `protocol_version: 1`;
 - monotonically increasing request IDs;
-- one complete response;
-- response arriving over partial TCP reads;
-- command error converted to `E2EResult(ok=false)`;
-- timeout converted to `E2EResult(error_code="timeout")`;
-- disconnect converted to `connection_lost`;
-- log deltas appended to collected logs;
+- upstream command-specific success dictionaries;
+- `_t` result deserialization;
+- response over partial TCP reads;
+- any response containing `error` becomes `E2EResult(ok=false)` with readable message;
+- an upstream `{error, message}` pair is rendered without a new framework error-code field;
+- client timeout;
+- connection loss;
+- `_logs`/`_logs_dropped` collection;
 - second command rejected while one is in flight;
-- `close()` is idempotent.
+- oversized frame closes/rejects;
+- `close()` idempotency;
+- client receives `_process()` because it is parented in the suite tree.
 
-- [ ] **Step 3: Implement polling without blocking the Godot main loop**
+- [ ] **Step 3: Implement `_process()` polling without busy waits**
 
-`E2EClient` should call `StreamPeerTCP.poll()` from `_process()`, append available bytes to a receive buffer, repeatedly extract complete frames, and resolve the one pending request.
+Core shape:
 
-Do not use a busy loop waiting for network data.
+```gdscript
+func _process(_delta: float) -> void:
+    if _peer == null:
+        return
+    _peer.poll()
+    _read_available_bytes()
+    _extract_complete_frames()
+    _expire_pending_request_if_needed()
+```
 
-- [ ] **Step 4: Implement request timeout using `Time.get_ticks_msec()`**
+Never loop waiting for future network bytes.
 
-Timeout completion must happen from the client's normal processing path so GdUnit remains responsive.
+- [ ] **Step 4: Implement exact upstream error/result handling**
 
-- [ ] **Step 5: Run the client tests**
+Use:
+
+```gdscript
+if response.has("error"):
+    var server_error := str(response["error"])
+    var detail := str(response.get("message", server_error))
+    var rendered := detail if detail == server_error else "%s — %s" % [server_error, detail]
+    return E2EResult.failure(rendered, logs)
+```
+
+Do not infer `node_not_found` or other framework error enums.
+
+- [ ] **Step 5: Implement monotonic deadline tracking**
+
+Pending requests store an absolute `Time.get_ticks_msec()` deadline. Expiry happens only from normal `_process()` polling.
+
+- [ ] **Step 6: Run client tests**
 
 ```bash
 ./addons/gdUnit4/runtest.sh -a tests/unit/client_test.gd
@@ -434,16 +480,16 @@ Timeout completion must happen from the client's normal processing path so GdUni
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add addons/gdunit_e2e/client/e2e_result.gd addons/gdunit_e2e/client/e2e_pending_request.gd addons/gdunit_e2e/client/e2e_client.gd tests/helpers/fake_e2e_server.gd tests/unit/client_test.gd
-git commit -m "feat: add async gdscript e2e client"
+git commit -m "feat: add async in-tree gdscript e2e client"
 ```
 
 ---
 
-## Task 5: Add child-process launch and cleanup
+## Task 5: Add non-blocking child-process launch, tree ownership, and bounded cleanup
 
 **Files:**
 - Create: `addons/gdunit_e2e/client/e2e_launch_options.gd`
@@ -458,6 +504,7 @@ git commit -m "feat: add async gdscript e2e client"
 
 ```gdscript
 class_name E2ELaunchOptions
+extends RefCounted
 var project_path: String
 var godot_path: String
 var timeout_seconds := 10.0
@@ -476,15 +523,21 @@ func get_stderr() -> String
 func get_exit_code() -> int
 ```
 
-- [ ] **Step 1: Write launch-option validation tests**
+- [ ] **Step 1: Write launch-option RED tests**
 
-Validate project path, optional explicit Godot executable, accepted log verbosity, and command construction.
+Validate project path, optional executable, log verbosity, and exact argv. After `--`, argv contains only:
 
-Default executable is `OS.get_executable_path()`.
+```text
+--gdunit-e2e
+--gdunit-e2e-port=0
+--gdunit-e2e-port-file=...
+--gdunit-e2e-token=...
+--gdunit-e2e-log-verbosity=...
+```
+
+Assert GdUnit CLI arguments are never forwarded.
 
 - [ ] **Step 2: Create the minimal fixture project**
-
-The fixture scene must expose enough observable state for later tests:
 
 ```gdscript
 extends Node2D
@@ -498,40 +551,53 @@ func _unhandled_input(event: InputEvent) -> void:
         status.text = "accepted:%d" % action_count
 ```
 
-Include a `Button` whose press changes another label so click automation can be tested later.
+Include a `Button` whose `pressed` signal changes another label.
 
 - [ ] **Step 3: Write process lifecycle RED tests**
 
 Test:
 
-1. child launches using `OS.execute_with_pipe()`;
-2. child writes its ephemeral port file;
-3. client connects and authenticates;
-4. process is alive after launch;
-5. `close()` requests quit and reaps the child;
-6. `close()` twice is safe;
-7. a child that cannot complete handshake returns a launch error and is killed;
-8. temporary port file is removed.
+1. the `E2EProcess` must be in the SceneTree before launch;
+2. child launches with `OS.execute_with_pipe(..., false)` behavior;
+3. child writes an ephemeral port file;
+4. `E2EClient` is added as child of `E2EProcess` before connect;
+5. client connects/authenticates;
+6. process is alive after launch;
+7. no stdout/stderr read is attempted while child is alive;
+8. graceful close reaps child;
+9. forced close kills an unhealthy child;
+10. after close `OS.is_process_running(pid)` is false;
+11. non-blocking pipe drain terminates at EOF/error/bound after death;
+12. `close()` twice is safe;
+13. port file is removed.
 
-- [ ] **Step 4: Implement launch flow**
+- [ ] **Step 4: Implement launch with explicitly non-blocking pipes**
 
-```text
-create temp port file path
-→ generate random token
-→ OS.execute_with_pipe()
-→ poll file until it contains a port or timeout/child exit
-→ add E2EClient as a child Node
-→ connect + hello
-→ return success
+Use the exact call shape:
+
+```gdscript
+var process_info := OS.execute_with_pipe(executable, args, false)
 ```
 
-Use `Crypto.generate_random_bytes()` (or equivalent Godot crypto API) to create the per-launch token; do not use a fixed test token in production code.
+Do not omit the third argument.
 
-- [ ] **Step 5: Implement shutdown flow**
+Poll only process status and the port file during startup. Do not read stdout/stderr while the child is running.
 
-Attempt graceful `quit`, close the client, and then hard-kill a still-running PID with `OS.kill()` after a short bounded grace period.
+- [ ] **Step 5: Implement client parenting and launch handshake**
 
-- [ ] **Step 6: Run process lifecycle integration tests**
+```gdscript
+_client = E2EClient.new()
+add_child(_client)
+var result := await _client.connect_to_server(_port, _token, options.timeout_seconds)
+```
+
+`E2EProcess` itself is parented by the GdUnit suite in Task 7; direct integration tests must `add_child(process)` before calling `launch()`.
+
+- [ ] **Step 6: Implement bounded shutdown and post-death pipe drain**
+
+Attempt remote `quit`, close TCP, wait a short grace period, then call `OS.kill(pid)` if needed. Only after `OS.is_process_running(pid)` is false, drain each non-blocking pipe until EOF/error or a documented small bound.
+
+- [ ] **Step 7: Run lifecycle integration tests**
 
 ```bash
 ./addons/gdUnit4/runtest.sh -a tests/integration/process_lifecycle_test.gd
@@ -539,16 +605,16 @@ Attempt graceful `quit`, close the client, and then hard-kill a still-running PI
 
 Expected: PASS with no surviving child process.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add addons/gdunit_e2e/client/e2e_launch_options.gd addons/gdunit_e2e/client/e2e_process.gd tests/fixtures/minimal tests/unit/launch_options_test.gd tests/integration/process_lifecycle_test.gd
-git commit -m "feat: manage e2e child process lifecycle"
+git commit -m "feat: manage non-blocking e2e child lifecycle"
 ```
 
 ---
 
-## Task 6: Expose the high-level remote game API
+## Task 6: Expose the high-level remote game API with deterministic wait deadlines
 
 **Files:**
 - Create: `addons/gdunit_e2e/client/gdunit_e2e_game.gd`
@@ -570,6 +636,7 @@ func get_tree(path := "/root", depth := 4) -> Dictionary
 func input_action(action_name: String, pressed: bool, strength := 1.0) -> bool
 func press_action(action_name: String, strength := 1.0) -> bool
 func input_key(keycode: int, pressed: bool, physical := false) -> bool
+func input_mouse_button(x: float, y: float, button := 1, pressed := true) -> bool
 func click_node(path: String) -> bool
 
 func wait_process_frames(count := 1) -> bool
@@ -583,53 +650,94 @@ func get_scene() -> String
 func change_scene(scene_path: String) -> bool
 func reload_scene() -> bool
 func screenshot(save_path := "") -> String
-func send_command(action: String, parameters := {}, timeout := 5.0) -> E2EResult
+func send_command(action: String, parameters := {}, timeout := E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS) -> E2EResult
 ```
 
-All remote methods that wait for TCP results are invoked with `await` by callers, even where the returned business value is not itself a signal.
+`GdUnitE2EGame` receives a live `E2EProcess`/`E2EClient` plus the owning `GdUnitTestSuite` used only for public `fail()`/`is_failure()` behavior.
 
-- [ ] **Step 1: Write unit tests around a fake client**
+- [ ] **Step 1: Write fake-client RED tests for exact command shapes**
 
-Verify each wrapper sends the expected upstream command and serializes/deserializes values correctly.
+Verify wrappers send pinned upstream command names/parameters and deserialize business values. Do not require every upstream server command to gain a wrapper.
 
-- [ ] **Step 2: Implement the smallest wrapper**
+- [ ] **Step 2: Write timeout-margin RED tests**
 
-Do not add locators or assertion classes.
+Pin these client deadlines:
 
-- [ ] **Step 3: Add the real gameplay smoke test**
+```gdscript
+await game.wait_for_node(path, 5.0)      # send_command timeout 6.0
+await game.wait_for_property(..., 2.5)  # send_command timeout 3.5
+await game.wait_for_signal(..., 1.0)    # send_command timeout 2.0
+await game.wait_seconds(3.0)             # send_command timeout 4.0
+```
 
-The test must prove the product's core value:
+Scene change/reload use `DEFAULT_COMMAND_TIMEOUT_SECONDS + WAIT_MARGIN_SECONDS`.
+
+- [ ] **Step 3: Implement wrapper failure mapping with safe fallbacks**
+
+A helper formats context plus the `E2EResult.message` and calls only public `GdUnitTestSuite.fail()`.
+
+```gdscript
+func _fail_remote(action: String, context: String, result: E2EResult) -> void:
+    _suite.fail("E2E command %s failed%s: %s" % [
+        action,
+        " for " + context if not context.is_empty() else "",
+        result.message,
+    ])
+```
+
+Do not add a framework error-code enum.
+
+- [ ] **Step 4: Keep raw `send_command()` non-failing**
+
+Raw `send_command()` returns `E2EResult` directly and does not call GdUnit `fail()`. This is the deliberate escape hatch for retained upstream commands and negative-path tests.
+
+- [ ] **Step 5: Add real gameplay smoke tests**
 
 ```gdscript
 func test_action_reaches_separate_game_process() -> void:
     var game := await launch_fixture_game()
+    if is_failure():
+        return
 
     assert_int(await game.get_property("/root/Main", "action_count")).is_equal(0)
+    if is_failure():
+        return
+
     await game.press_action("ui_accept")
+    if is_failure():
+        return
+
     await game.wait_process_frames(2)
+    if is_failure():
+        return
+
     assert_int(await game.get_property("/root/Main", "action_count")).is_equal(1)
 ```
 
-Add a second test that clicks the fixture button and verifies its label changed remotely.
+Add a second integration test for `click_node()` changing the fixture label.
 
-- [ ] **Step 4: Run the smoke tests**
+- [ ] **Step 6: Add real server/client timeout-race regression**
+
+Use a server wait close to its configured timeout and assert the result arrives as the server's timeout/failure result rather than a client timeout. The test must fail if the client deadline equals the server timeout instead of adding the 1 second margin.
+
+- [ ] **Step 7: Run API + smoke tests**
 
 ```bash
-./addons/gdUnit4/runtest.sh -a tests/integration/gameplay_smoke_test.gd
+./addons/gdUnit4/runtest.sh -a tests/unit/game_api_test.gd -a tests/integration/gameplay_smoke_test.gd
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add addons/gdunit_e2e/client/gdunit_e2e_game.gd tests/unit/game_api_test.gd tests/integration/gameplay_smoke_test.gd
-git commit -m "feat: expose remote game test api"
+git commit -m "feat: expose gdunit remote game api"
 ```
 
 ---
 
-## Task 7: Integrate GdUnit lifecycle and failure artifacts
+## Task 7: Integrate GdUnit tree ownership, failure state, cleanup, and artifacts
 
 **Files:**
 - Create: `addons/gdunit_e2e/gdunit/gdunit_e2e_test_suite.gd`
@@ -647,46 +755,75 @@ func close_game(game: GdUnitE2EGame) -> void
 func capture_failure_artifacts(game: GdUnitE2EGame) -> void
 ```
 
-The base suite may internally track launched sessions for guaranteed cleanup, but it must not override or replace GdUnit's test runner.
+The base suite tracks launched `E2EProcess` Nodes for guaranteed cleanup but does not replace GdUnit's runner.
 
-- [ ] **Step 1: Write failure-format tests**
+- [ ] **Step 1: Write suite-parenting RED tests**
 
-A failed remote command should become one readable GdUnit failure containing action, target context, error code, and message.
+Verify `launch_game()`:
 
-Example desired text:
+1. creates `E2EProcess`;
+2. calls `add_child(process)` before `await process.launch()`;
+3. returns a `GdUnitE2EGame` only after launch succeeds;
+4. on launch failure calls `fail(message)` and returns `null`;
+5. cleanup closes, removes, and frees tracked process Nodes.
 
-```text
-E2E command get_property failed for /root/Main/Missing.health: node_not_found — Node '/root/Main/Missing' was not found
+- [ ] **Step 2: Implement suite launch/cleanup with explicit failure return behavior**
+
+Consumer pattern is pinned in tests/docs:
+
+```gdscript
+var game := await launch_game()
+if is_failure():
+    return
 ```
 
-- [ ] **Step 2: Implement GdUnit failure mapping**
+Do not rely on `fail()` to stop execution.
 
-Use the public `fail(message)` API. Do not reach into GdUnit internals.
+- [ ] **Step 3: Write failure-format unit tests**
 
-- [ ] **Step 3: Add automatic launched-session cleanup**
-
-Any game launched through the base suite is registered and closed from suite cleanup even if a test fails.
-
-- [ ] **Step 4: Add best-effort artifacts on failure**
-
-Create:
+For an upstream missing-node response, desired failure text contains the action, target context, and exact upstream message, for example:
 
 ```text
-test_output/<suite>/<test>/
-├── screenshot.png
-├── scene_tree.json
-├── engine_logs.json
-├── stdout.log
-└── stderr.log
+E2E command get_property failed for /root/Main/Missing.health: Node not found: /root/Main/Missing
 ```
 
-Capture each artifact independently. A screenshot failure must not prevent log capture, and artifact errors must not replace the primary test failure.
+Do not expect `node_not_found`.
 
-- [ ] **Step 5: Add the deliberately failing integration test**
+- [ ] **Step 4: Implement reachable-child artifact capture**
 
-Run a nested/fixture test that intentionally requests a missing node, then assert the output directory contains the available artifacts and the child process was cleaned up.
+`capture_failure_artifacts(game)` independently attempts screenshot, scene tree, and engine logs. One failure cannot suppress the others.
 
-- [ ] **Step 6: Run lifecycle/artifact tests**
+- [ ] **Step 5: Implement post-death stdout/stderr artifact finalization**
+
+`close_game()` lets `E2EProcess.close()` kill/reap then drain pipes. If the current test has an artifact directory, write `stdout.log`/`stderr.log` afterward. No live pipe reads.
+
+- [ ] **Step 6: Unit-test artifact helper with fakes**
+
+Use a fake/reachable `GdUnitE2EGame` and fake process outputs. Assert filenames/content without creating a failing GdUnit test.
+
+- [ ] **Step 7: Add non-failing artifact integration test using raw command failure**
+
+```gdscript
+func test_known_bad_command_can_capture_failure_artifacts() -> void:
+    var game := await launch_game()
+    if is_failure():
+        return
+
+    var result := await game.send_command("get_property", {
+        "path": "/root/Main/Missing",
+        "property": "health",
+    })
+    assert_bool(result.ok).is_false()
+
+    await capture_failure_artifacts(game)
+    await close_game(game)
+
+    assert_file("test_output/.../scene_tree.json").exists()
+```
+
+The outer suite stays green; it characterizes diagnostics after a known-bad raw command instead of nesting an intentionally failing GdUnit run.
+
+- [ ] **Step 8: Run suite/artifact tests**
 
 ```bash
 ./addons/gdUnit4/runtest.sh \
@@ -694,9 +831,9 @@ Run a nested/fixture test that intentionally requests a missing node, then asser
   -a tests/integration/failure_artifact_test.gd
 ```
 
-Expected: PASS (the outer characterization test validates the intentionally failing inner flow).
+Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add addons/gdunit_e2e/gdunit tests/unit/gdunit_suite_test.gd tests/integration/failure_artifact_test.gd
@@ -711,16 +848,14 @@ git commit -m "feat: integrate gdunit lifecycle and diagnostics"
 - Create: `.github/workflows/ci.yml`
 - Create: `scripts/package_release.sh`
 - Modify: `README.md`
-- Modify: `NOTICE` if adapted file list changed
+- Modify: `NOTICE` if the adapted-file attribution list changes
 - Verify: all tests
 
 **Interfaces:**
-- Produces Linux and Windows CI exercising real child processes.
-- Produces `dist/godot-e2e-0.1.0.zip` containing only distributable files.
+- Linux and Windows CI exercise real child processes.
+- Release: `dist/godot-e2e-0.1.0.zip` contains only distributable files.
 
 - [ ] **Step 1: Add Linux CI**
-
-Linux job:
 
 ```text
 checkout
@@ -733,8 +868,6 @@ checkout
 
 - [ ] **Step 2: Add Windows CI**
 
-Windows job:
-
 ```text
 checkout
 → install same Godot version family
@@ -743,11 +876,11 @@ checkout
 → upload reports/test_output on failure
 ```
 
-Do not add macOS or a version matrix in this PR.
+No macOS or version matrix in this PR.
 
 - [ ] **Step 3: Add release packaging test/script**
 
-`package_release.sh` must package only:
+Package exactly:
 
 ```text
 addons/gdunit_e2e/**
@@ -756,37 +889,36 @@ LICENSE
 NOTICE
 ```
 
-and explicitly exclude `addons/gdUnit4`, tests, reports, and `test_output`.
+Exclude `addons/gdUnit4`, tests, reports, `test_output`, and development-only files.
 
 - [ ] **Step 4: Replace planning README with user-facing setup**
 
-README should contain:
+README includes prerequisites, install/enable steps, architecture distinction from GdUnit scene tests, wrapped MVP API, raw `send_command()` escape hatch, child-autoload behavior, CI notes, and pinned upstream attribution.
 
-1. what E2E isolation adds beyond GdUnit scene tests;
-2. prerequisites;
-3. addon installation;
-4. enabling the plugin/autoload;
-5. a minimal GDScript test;
-6. command/API table for the MVP;
-7. CI notes;
-8. attribution to the pinned upstream commit;
-9. explicit non-goals/deferred features.
-
-Minimal example:
+The minimal example must show explicit abort after recorded failure:
 
 ```gdscript
 extends GdUnitE2ETestSuite
 
 func test_game_accepts_input() -> void:
     var game := await launch_game()
+    if is_failure():
+        return
+
     await game.press_action("ui_accept")
+    if is_failure():
+        return
+
     await game.wait_process_frames(2)
+    if is_failure():
+        return
+
     assert_int(await game.get_property("/root/Main", "action_count")).is_equal(1)
 ```
 
-- [ ] **Step 5: Run the complete local verification**
+Document that the child uses the same project and therefore loads normal project autoloads; the launcher forwards no GdUnit CLI arguments to the child.
 
-Linux/macOS development machine:
+- [ ] **Step 5: Run complete local verification**
 
 ```bash
 ./scripts/bootstrap_gdunit4.sh
@@ -795,12 +927,7 @@ Linux/macOS development machine:
 unzip -l dist/godot-e2e-0.1.0.zip
 ```
 
-Verify:
-
-- zero GdUnit failures;
-- all integration children exit;
-- no leftover `.port` files;
-- package contains no GdUnit4 dependency or test files.
+Verify zero failures, no live child PIDs, no stale `.port` files, and no vendored GdUnit4/test files in the ZIP.
 
 - [ ] **Step 6: Commit**
 
@@ -815,19 +942,27 @@ git commit -m "ci: validate and package gdunit e2e addon"
 
 Before marking the single implementation PR ready for review:
 
-- [ ] Re-read `docs/superpowers/specs/2026-08-23-gdunit-e2e-design.md` and map every acceptance criterion to a passing test or documented manual check.
+- [ ] Re-read the design spec and map every acceptance criterion to a passing test or explicit packaging/CI check.
+- [ ] Search the spec, plan, and production protocol code for `__godot_type`, `node_not_found`, and a universal `{ok,result}` response assumption; none may define the wire contract.
+- [ ] Compare adapted server/serializer/config behavior with pinned commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36`; intentional differences are limited to names/flags, loopback binding, strict startup config, shared framing, and the 16 MiB cap.
+- [ ] Confirm retained upstream commands still exist even when `GdUnitE2EGame` has no convenience wrapper.
+- [ ] Confirm `connect_to_server()` has no host parameter and uses `127.0.0.1`.
+- [ ] Confirm wait wrappers add `WAIT_MARGIN_SECONDS` to their client deadline.
+- [ ] Confirm every polling `E2EClient` in tests/production is parented in the active SceneTree.
+- [ ] Search for `execute_with_pipe(` and confirm every child launch passes `false` for `blocking`.
+- [ ] Search process code for stdout/stderr reads while `OS.is_process_running(pid)` is true; none should exist.
 - [ ] Run the complete GdUnit suite from a clean checkout after bootstrapping GdUnit4.
 - [ ] Confirm Linux CI passes.
 - [ ] Confirm Windows CI passes.
-- [ ] Confirm failure artifacts are uploaded when a CI characterization run fails.
+- [ ] Confirm artifact integration stays green while exercising a raw known-bad command.
 - [ ] Inspect the release ZIP and confirm it contains only addon + README/LICENSE/NOTICE.
-- [ ] Search production addon code for `pytest`, Python imports, locators, process pools, editor panels, and other explicitly deferred features; none should exist.
-- [ ] Search adapted upstream files for Apache-2.0 attribution and modification notices.
-- [ ] Confirm the PR contains task-level commits but remains one PR for the MVP.
+- [ ] Search production addon code for Python/pytest imports, locators, process pools, editor panels, and other deferred features; none should exist.
+- [ ] Search adapted upstream files for Apache-2.0 attribution/modification notices.
+- [ ] Confirm the work remains one PR with task-level commits.
 
 ## Follow-ups after 0.1.0
 
-Do not pull these into the MVP unless a test proves the core design cannot work without them:
+Do not pull these into the MVP unless a failing core test proves they are required:
 
 1. Playwright-like locators.
 2. Retrying `expect()` assertions.
@@ -835,4 +970,4 @@ Do not pull these into the MVP unless a test proves the core design cannot work 
 4. Dedicated Godot .NET/C# target fixture.
 5. macOS CI.
 6. Multiple parallel child sessions.
-7. richer trace/diagnostic UX.
+7. Richer trace/diagnostic UX.
