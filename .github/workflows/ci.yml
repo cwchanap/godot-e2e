@@ -39,6 +39,8 @@ jobs:
       - name: Run expected-failure artifact harness
         shell: bash
         run: |
+          harness_output="test_output/failure_harness_test/test_real_failure_captures_artifacts"
+          rm -rf -- "$harness_output"
           set +e
           xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
             ./addons/gdUnit4/runtest.sh -a tests/fixtures/failure_harness_test.gd
@@ -46,6 +48,40 @@ jobs:
           set -e
           if [ "$status" -ne 100 ]; then
             echo "Expected the failure harness to exit 100, got $status" >&2
+            exit 1
+          fi
+          expected_artifacts=(
+            screenshot.png
+            scene_tree.json
+            engine_logs.json
+            stdout.log
+            stderr.log
+          )
+          for artifact in "${expected_artifacts[@]}"; do
+            if [ ! -f "$harness_output/$artifact" ]; then
+              echo "Missing failure harness artifact: $harness_output/$artifact" >&2
+              exit 1
+            fi
+          done
+          process_snapshot() {
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+                '$self = $PID; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $self -and $_.CommandLine } | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }'
+            else
+              ps -eo pid=,args=
+            fi
+          }
+          survivors="$(process_snapshot | while read -r pid command; do
+            if [ "$pid" = "$$" ] || [ "$pid" = "$BASHPID" ]; then
+              continue
+            fi
+            case "$command" in
+              *--gdunit-e2e*) printf '%s %s\n' "$pid" "$command" ;;
+            esac
+          done)"
+          if [ -n "$survivors" ]; then
+            echo "Found surviving --gdunit-e2e child process(es):" >&2
+            echo "$survivors" >&2
             exit 1
           fi
 
@@ -92,12 +128,48 @@ jobs:
       - name: Run expected-failure artifact harness
         shell: bash
         run: |
+          harness_output="test_output/failure_harness_test/test_real_failure_captures_artifacts"
+          rm -rf -- "$harness_output"
           set +e
           ./addons/gdUnit4/runtest.sh -a tests/fixtures/failure_harness_test.gd
           status=$?
           set -e
           if [ "$status" -ne 100 ]; then
             echo "Expected the failure harness to exit 100, got $status" >&2
+            exit 1
+          fi
+          expected_artifacts=(
+            screenshot.png
+            scene_tree.json
+            engine_logs.json
+            stdout.log
+            stderr.log
+          )
+          for artifact in "${expected_artifacts[@]}"; do
+            if [ ! -f "$harness_output/$artifact" ]; then
+              echo "Missing failure harness artifact: $harness_output/$artifact" >&2
+              exit 1
+            fi
+          done
+          process_snapshot() {
+            if [ "${RUNNER_OS:-}" = "Windows" ]; then
+              powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+                '$self = $PID; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $self -and $_.CommandLine } | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }'
+            else
+              ps -eo pid=,args=
+            fi
+          }
+          survivors="$(process_snapshot | while read -r pid command; do
+            if [ "$pid" = "$$" ] || [ "$pid" = "$BASHPID" ]; then
+              continue
+            fi
+            case "$command" in
+              *--gdunit-e2e*) printf '%s %s\n' "$pid" "$command" ;;
+            esac
+          done)"
+          if [ -n "$survivors" ]; then
+            echo "Found surviving --gdunit-e2e child process(es):" >&2
+            echo "$survivors" >&2
             exit 1
           fi
 

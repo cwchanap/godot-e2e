@@ -100,11 +100,19 @@ func test_wrapper_preserves_upstream_actions_parameters_and_values() -> void:
 		"timeout": Protocol.DEFAULT_COMMAND_TIMEOUT_SECONDS,
 	})
 
+	var press_call_start := client.calls.size()
+	client.queue_response("input_action", E2EResultScript.new(true, {"ok": true}))
 	client.queue_response("input_action", E2EResultScript.new(true, {"ok": true}))
 	assert_bool(await game.press_action("ui_accept", 0.5)).is_true()
-	assert_that(client.calls[-1]).is_equal({
+	assert_int(client.calls.size()).is_equal(press_call_start + 2)
+	assert_that(client.calls[press_call_start]).is_equal({
 		"action": "input_action",
 		"parameters": {"action_name": "ui_accept", "pressed": true, "strength": 0.5},
+		"timeout": Protocol.DEFAULT_COMMAND_TIMEOUT_SECONDS,
+	})
+	assert_that(client.calls[press_call_start + 1]).is_equal({
+		"action": "input_action",
+		"parameters": {"action_name": "ui_accept", "pressed": false, "strength": 0.5},
 		"timeout": Protocol.DEFAULT_COMMAND_TIMEOUT_SECONDS,
 	})
 
@@ -237,6 +245,52 @@ func test_convenience_failure_calls_public_suite_fail_and_returns_fallback() -> 
 
 	assert_that(value).is_null()
 	assert_that(suite.failures).is_equal(["Property unavailable"])
+
+
+func test_press_action_reports_failed_release_after_pressing_in_order() -> void:
+	var client := _RecordingClient.new()
+	var suite := _RecordingSuite.new()
+	var game = _new_game(client, suite)
+	if game == null:
+		return
+
+	client.queue_response("input_action", E2EResultScript.new(true, {"ok": true}))
+	client.queue_response("input_action", E2EResultScript.new(false, null, "Release unavailable"))
+	var result: bool = await game.press_action("ui_accept", 0.5)
+
+	assert_bool(result).is_false()
+	assert_that(client.calls).has_size(2)
+	assert_that(client.calls[0]["parameters"]).is_equal({
+		"action_name": "ui_accept",
+		"pressed": true,
+		"strength": 0.5,
+	})
+	assert_that(client.calls[1]["parameters"]).is_equal({
+		"action_name": "ui_accept",
+		"pressed": false,
+		"strength": 0.5,
+	})
+	assert_that(suite.failures).is_equal(["Release unavailable"])
+
+
+func test_press_action_does_not_release_when_pressing_fails() -> void:
+	var client := _RecordingClient.new()
+	var suite := _RecordingSuite.new()
+	var game = _new_game(client, suite)
+	if game == null:
+		return
+
+	client.queue_response("input_action", E2EResultScript.new(false, null, "Press unavailable"))
+	var result: bool = await game.press_action("ui_accept")
+
+	assert_bool(result).is_false()
+	assert_that(client.calls).has_size(1)
+	assert_that(client.calls[0]["parameters"]).is_equal({
+		"action_name": "ui_accept",
+		"pressed": true,
+		"strength": 1.0,
+	})
+	assert_that(suite.failures).is_equal(["Press unavailable"])
 
 
 func _new_game(client, suite):

@@ -74,7 +74,10 @@ func input_action(action_name: String, pressed: bool, strength := 1.0) -> bool:
 
 
 func press_action(action_name: String, strength := 1.0) -> bool:
-	return await input_action(action_name, true, strength)
+	var pressed := await input_action(action_name, true, strength)
+	if not pressed:
+		return false
+	return await input_action(action_name, false, strength)
 
 
 func input_key(keycode: int, pressed: bool, physical := false) -> bool:

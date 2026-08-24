@@ -9,9 +9,10 @@
 ##   cfg.get_token()             # --gdunit-e2e-token=X
 ##   cfg.get_log_verbosity()    # --gdunit-e2e-log-verbosity={error|warning|info}
 ##
-## Modified from RandallLiuXin/godot-e2e at commit
-## ae6219f6e758a0f29bd243c8f963417fe4d63c36. The addon uses renamed flags
-## and fails closed for malformed E2E-only configuration.
+## Modified from RandallLiuXin/godot-e2e at pinned upstream source commit
+## ae6219f6e758a0f29bd243c8f963417fe4d63c36. The pinned upstream source is
+## under Apache-2.0. The addon uses renamed flags and fails closed for
+## malformed E2E-only configuration.
 
 class_name GdUnitE2EConfig
 

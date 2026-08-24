@@ -41,6 +41,14 @@ func test_real_input_and_click_update_remote_fixture_state() -> void:
 	if is_failure():
 		return
 	assert_int(int(updated_count)).is_equal(1)
+	var release_count = await game.get_property("/root/Main", "action_release_count")
+	if is_failure():
+		return
+	assert_int(int(release_count)).is_equal(1)
+	var action_pressed = await game.get_property("/root/Main", "action_pressed")
+	if is_failure():
+		return
+	assert_bool(bool(action_pressed)).is_false()
 
 	assert_bool(await game.click_node("/root/Main/Button")).is_true()
 	if is_failure():
