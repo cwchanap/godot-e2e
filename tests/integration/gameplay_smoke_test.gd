@@ -82,7 +82,7 @@ func _launch_game():
 	add_child(_process)
 	var options := E2ELaunchOptionsScript.new()
 	options.project_path = ProjectSettings.globalize_path("res://")
-	options.godot_path = "/Users/chanwaichan/.local/bin/godot"
+	options.godot_path = _godot_executable()
 	options.timeout_seconds = 5.0
 	options.extra_godot_args = PackedStringArray(["--quiet"])
 	var result = await _process.launch(options)
@@ -91,3 +91,8 @@ func _launch_game():
 		return null
 	_game = E2EGameScript.new(_process.get_client(), self)
 	return _game
+
+
+func _godot_executable() -> String:
+	var configured := OS.get_environment("GODOT_BIN")
+	return configured if not configured.is_empty() else OS.get_executable_path()
