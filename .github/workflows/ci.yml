@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot
+        uses: chickensoft-games/setup-godot@v2.4.1
+        with:
+          version: 4.5.1
+          use-dotnet: false
+
+      - name: Resolve Godot executable
+        shell: bash
+        run: echo "GODOT_BIN=$(command -v godot)" >> "$GITHUB_ENV"
+
+      - name: Install Xvfb
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends xvfb
+
+      - name: Bootstrap GdUnit4
+        shell: bash
+        run: ./scripts/bootstrap_gdunit4.sh
+
+      - name: Run normal unit and integration suites
+        shell: bash
+        run: >-
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24"
+          ./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
+
+      - name: Run expected-failure artifact harness
+        shell: bash
+        run: |
+          set +e
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+            ./addons/gdUnit4/runtest.sh -a tests/fixtures/failure_harness_test.gd
+          status=$?
+          set -e
+          if [ "$status" -ne 100 ]; then
+            echo "Expected the failure harness to exit 100, got $status" >&2
+            exit 1
+          fi
+
+      - name: Upload reports and test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-artifacts
+          if-no-files-found: warn
+          path: |
+            reports
+            test_output
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot
+        uses: chickensoft-games/setup-godot@v2.4.1
+        with:
+          version: 4.5.1
+          use-dotnet: false
+
+      - name: Resolve Godot executable
+        shell: bash
+        run: |
+          godot_path="$(command -v godot)"
+          if command -v cygpath >/dev/null 2>&1; then
+            godot_path="$(cygpath --windows "$godot_path")"
+          fi
+          echo "GODOT_BIN=$godot_path" >> "$GITHUB_ENV"
+
+      - name: Bootstrap GdUnit4
+        shell: bash
+        run: ./scripts/bootstrap_gdunit4.sh
+
+      - name: Run normal unit and integration suites
+        shell: bash
+        run: ./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
+
+      - name: Run expected-failure artifact harness
+        shell: bash
+        run: |
+          set +e
+          ./addons/gdUnit4/runtest.sh -a tests/fixtures/failure_harness_test.gd
+          status=$?
+          set -e
+          if [ "$status" -ne 100 ]; then
+            echo "Expected the failure harness to exit 100, got $status" >&2
+            exit 1
+          fi
+
+      - name: Upload reports and test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-artifacts
+          if-no-files-found: warn
+          path: |
+            reports
+            test_output
