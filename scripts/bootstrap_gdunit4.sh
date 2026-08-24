@@ -7,7 +7,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ADDON_DIR="$PROJECT_ROOT/addons/gdUnit4"
 
+import_project_scripts() {
+	if [ -z "${GODOT_BIN:-}" ]; then
+		return
+	fi
+	if [ ! -x "$GODOT_BIN" ]; then
+		echo "GODOT_BIN is not executable: $GODOT_BIN" >&2
+		exit 1
+	fi
+	"$GODOT_BIN" --headless --editor --path "$PROJECT_ROOT" --quit
+}
+
 if [ -d "$ADDON_DIR" ]; then
+	import_project_scripts
 	exit 0
 fi
 
@@ -55,3 +67,4 @@ fi
 
 mkdir -p "$PROJECT_ROOT/addons"
 cp -R "$SOURCE_DIR" "$ADDON_DIR"
+import_project_scripts

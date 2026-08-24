@@ -30,6 +30,10 @@ jobs:
         shell: bash
         run: ./scripts/bootstrap_gdunit4.sh
 
+      - name: Verify clean bootstrap import
+        shell: bash
+        run: bash tests/scripts/bootstrap_gdunit4_import_test.sh
+
       - name: Run normal unit and integration suites
         shell: bash
         run: >-
@@ -120,6 +124,10 @@ jobs:
       - name: Bootstrap GdUnit4
         shell: bash
         run: ./scripts/bootstrap_gdunit4.sh
+
+      - name: Verify clean bootstrap import
+        shell: bash
+        run: bash tests/scripts/bootstrap_gdunit4_import_test.sh
 
       - name: Run normal unit and integration suites
         shell: bash
