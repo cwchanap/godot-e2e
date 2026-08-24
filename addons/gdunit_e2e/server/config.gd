@@ -61,6 +61,8 @@ static func _ensure_parsed() -> void:
 			else:
 				_mark_invalid("invalid log verbosity '%s' (expected error, warning, or info)" % value)
 				_log_verbosity = value
+		elif arg.begins_with("--gdunit-e2e"):
+			_mark_invalid("unknown or malformed flag '%s'" % arg)
 
 	if _port == 0 and _port_file.is_empty():
 		_mark_invalid("port 0 requires --gdunit-e2e-port-file")

@@ -61,3 +61,10 @@ func test_unknown_log_verbosity_is_invalid_without_falling_back() -> void:
 	assert_bool(Config.is_valid()).is_false()
 	assert_str(Config.get_validation_error()).contains("verbose")
 	assert_str(Config.get_log_verbosity()).is_equal("verbose")
+
+
+func test_malformed_gdunit_e2e_flag_is_invalid_without_falling_back() -> void:
+	Config._reset_for_testing(["--gdunit-e2e", "--gdunit-e2e-port"])
+
+	assert_bool(Config.is_valid()).is_false()
+	assert_str(Config.get_validation_error()).contains("--gdunit-e2e-port")

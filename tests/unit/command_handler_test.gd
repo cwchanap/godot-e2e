@@ -83,20 +83,54 @@ func test_tree_and_input_wait_commands_keep_upstream_response_shapes() -> void:
 		"response": {"id": 8, "ok": true},
 	})
 
-
 func test_scene_change_reload_screenshot_and_quit_keep_upstream_shapes() -> void:
-	assert_that(_handler.execute({"id": 9, "action": "get_scene"})).is_equal({"id": 9, "error": "No current scene"})
+	assert_that(_handler.execute({"id": 10, "action": "get_scene"})).is_equal({"id": 10, "error": "No current scene"})
+
+	var scene_server := _SceneServer.new()
+	var scene_handler = CommandHandler.new(scene_server)
+	assert_that(scene_handler.execute({"id": 11, "action": "change_scene", "scene_path": "res://tests/fixtures/next.tscn"})).is_equal({
+		"_deferred": true,
+		"wait_type": "scene_change",
+		"scene_path": "res://tests/fixtures/next.tscn",
+		"id": 11,
+		"response": {"id": 11, "ok": true},
+	})
+	assert_str(scene_server.tree.last_scene_path).is_equal("res://tests/fixtures/next.tscn")
+
+	scene_server.tree.current_scene = _Scene.new("res://tests/fixtures/current.tscn")
+	assert_that(scene_handler.execute({"id": 12, "action": "reload_scene"})).is_equal({
+		"_deferred": true,
+		"wait_type": "scene_change",
+		"scene_path": "res://tests/fixtures/current.tscn",
+		"id": 12,
+		"response": {"id": 12, "ok": true},
+	})
+	assert_str(scene_server.tree.last_scene_path).is_equal("res://tests/fixtures/current.tscn")
 
 	var screenshot_path := ProjectSettings.globalize_path("res://task3-command-handler-screenshot.png")
 	var screenshot_handler = CommandHandler.new(_ScreenshotServer.new())
-	var screenshot: Dictionary = screenshot_handler.execute({"id": 10, "action": "screenshot", "save_path": screenshot_path})
-	assert_int(screenshot.get("id", -1)).is_equal(10)
+	var screenshot: Dictionary = screenshot_handler.execute({"id": 13, "action": "screenshot", "save_path": screenshot_path})
+	assert_int(screenshot.get("id", -1)).is_equal(13)
 	assert_bool(screenshot.get("ok", false)).is_true()
 	assert_str(screenshot.get("path", "")).ends_with("task3-command-handler-screenshot.png")
 	DirAccess.remove_absolute(screenshot_path)
 
 	var quit_handler = CommandHandler.new(_QuitServer.new())
-	assert_that(quit_handler.execute({"id": 11, "action": "quit", "exit_code": 0})).is_equal({"id": 11, "ok": true})
+	assert_that(quit_handler.execute({"id": 14, "action": "quit", "exit_code": 0})).is_equal({"id": 14, "ok": true})
+
+
+func test_click_node_keeps_upstream_response_shape() -> void:
+	var clickable := Node2D.new()
+	clickable.name = "Task3ClickableNode"
+	_fixture.add_child(clickable)
+
+	assert_that(_handler.execute({"id": 15, "action": "click_node", "path": str(clickable.get_path())})).is_equal({
+		"_deferred": true,
+		"wait_type": "physics_frames",
+		"count": 2,
+		"id": 15,
+		"response": {"id": 15, "ok": true},
+	})
 
 
 class _QuitServer extends RefCounted:
@@ -111,6 +145,29 @@ class _QuitTree extends RefCounted:
 
 	func quit(code: int = 0) -> void:
 		exit_code = code
+
+
+class _SceneServer extends RefCounted:
+	var tree := _SceneTree.new()
+
+	func get_tree() -> _SceneTree:
+		return tree
+
+
+class _SceneTree extends RefCounted:
+	var current_scene
+	var last_scene_path := ""
+
+	func change_scene_to_file(path: String) -> int:
+		last_scene_path = path
+		return OK
+
+
+class _Scene extends RefCounted:
+	var scene_file_path: String
+
+	func _init(path: String) -> void:
+		scene_file_path = path
 
 
 class _ScreenshotServer extends RefCounted:

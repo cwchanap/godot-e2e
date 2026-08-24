@@ -42,7 +42,7 @@ enum WaitType {
 
 # --- Networking ---
 var _server: TCPServer = null
-var _peer: StreamPeerTCP = null
+var _peer = null
 var _recv_buffer: PackedByteArray = PackedByteArray()
 
 # --- State machine ---
@@ -173,30 +173,35 @@ func _poll_connection_health() -> void:
 		_state = State.DISCONNECTED
 		return
 	_peer.poll()
-	var status := _peer.get_status()
+	var status: int = _peer.get_status()
 	if status != StreamPeerTCP.STATUS_CONNECTED:
 		_log("connection lost (status %d)" % status)
 		_state = State.DISCONNECTED
 
 
 func _poll_recv() -> void:
-	var available := _peer.get_available_bytes()
-	if available > 0:
-		var result := _peer.get_data(available)
-		var error: int = result[0]
-		var data: PackedByteArray = result[1]
-		if error != OK:
-			_log("recv error %d" % error)
-			_state = State.DISCONNECTED
-			return
-		_recv_buffer.append_array(data)
-
-	# Extract complete length-prefixed messages. E2EFraming checks the declared
-	# size before waiting for or allocating the body.
 	while true:
+		# Read only the four-byte declaration first. This ensures an untrusted
+		# length is validated before any body bytes enter the receive buffer.
+		while _recv_buffer.size() < 4:
+			if not _read_peer_bytes(4 - _recv_buffer.size()):
+				return
+
+		var declared_size: int = _decode_u32_be(_recv_buffer, 0)
+		if declared_size > E2EProtocolScript.MAX_FRAME_BYTES:
+			_log("inbound frame exceeds %d bytes" % E2EProtocolScript.MAX_FRAME_BYTES)
+			_disconnect_peer()
+			return
+
+		var frame_size := 4 + declared_size
+		while _recv_buffer.size() < frame_size:
+			if not _read_peer_bytes(frame_size - _recv_buffer.size()):
+				return
+
+		# Extract complete length-prefixed messages. E2EFraming performs the
+		# same declaration check for the shared primitive's callers.
 		var extracted: Dictionary = E2EFramingScript.try_extract(_recv_buffer)
 		if extracted.get("error", "") == "frame_too_large":
-			_log("inbound frame exceeds %d bytes" % E2EProtocolScript.MAX_FRAME_BYTES)
 			_disconnect_peer()
 			return
 		if not extracted.get("complete", false):
@@ -216,6 +221,24 @@ func _poll_recv() -> void:
 		# After dispatch we may have entered WAITING; stop reading if so.
 		if _state != State.IDLE:
 			break
+
+
+func _read_peer_bytes(max_bytes: int) -> bool:
+	if _peer == null or max_bytes <= 0:
+		return false
+	var available: int = _peer.get_available_bytes()
+	if available <= 0:
+		return false
+	var read_size: int = min(available, max_bytes)
+	var result: Array = _peer.get_data(read_size)
+	var error: int = result[0]
+	var data: PackedByteArray = result[1]
+	if error != OK:
+		_log("recv error %d" % error)
+		_state = State.DISCONNECTED
+		return false
+	_recv_buffer.append_array(data)
+	return true
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +273,7 @@ func _send_response(data: Dictionary) -> void:
 			_disconnect_peer()
 			return
 
-	var error := _peer.put_data(frame)
+	var error: int = _peer.put_data(frame)
 	if error != OK:
 		_log("send error %d" % error)
 		_state = State.DISCONNECTED
