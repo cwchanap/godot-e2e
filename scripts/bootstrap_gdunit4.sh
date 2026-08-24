@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 ARCHIVE="$TEMP_DIR/gdUnit4.zip"
 EXTRACTED="$TEMP_DIR/extracted"
-DOWNLOAD_URL="https://github.com/MikeSchulze/gdUnit4/releases/download/v${GDUNIT_VERSION}/gdUnit4-v${GDUNIT_VERSION}.zip"
+DOWNLOAD_URL="https://github.com/godot-gdunit-labs/gdUnit4/archive/refs/tags/v${GDUNIT_VERSION}.zip"
 
 mkdir -p "$EXTRACTED"
 curl --fail --location --silent --show-error "$DOWNLOAD_URL" --output "$ARCHIVE"
@@ -40,11 +40,15 @@ case "$(uname -s)" in
 		;;
 esac
 
-if [ -d "$EXTRACTED/addons/gdUnit4" ]; then
-	SOURCE_DIR="$EXTRACTED/addons/gdUnit4"
-elif [ -d "$EXTRACTED/gdUnit4" ]; then
-	SOURCE_DIR="$EXTRACTED/gdUnit4"
-else
+SOURCE_DIR=""
+for candidate in "$EXTRACTED/addons/gdUnit4" "$EXTRACTED/gdUnit4" "$EXTRACTED"/*/addons/gdUnit4; do
+	if [ -d "$candidate" ]; then
+		SOURCE_DIR="$candidate"
+		break
+	fi
+done
+
+if [ -z "$SOURCE_DIR" ]; then
 	echo "The GdUnit4 release archive did not contain addons/gdUnit4." >&2
 	exit 1
 fi
