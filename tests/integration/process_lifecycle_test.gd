@@ -6,6 +6,17 @@ const E2EProcessScript = preload("res://addons/gdunit_e2e/client/e2e_process.gd"
 var _process = null
 
 
+class _NeverDiesProcess extends E2EProcess:
+	func is_running() -> bool:
+		return true
+
+	func _wait_for_death(_timeout_millis: int) -> bool:
+		return false
+
+	func _force_kill() -> bool:
+		return false
+
+
 func after_test() -> void:
 	if is_instance_valid(_process):
 		await _process.close()
@@ -47,6 +58,19 @@ func test_close_force_kills_an_authenticated_child_when_the_client_is_gone() -> 
 	assert_bool(OS.is_process_running(pid)).is_false()
 	assert_bool(_process.is_running()).is_false()
 	assert_bool(elapsed < 4000).is_true()
+
+
+func test_close_does_not_complete_without_observing_pid_death() -> void:
+	var process := _NeverDiesProcess.new(self)
+	add_child(process)
+	process._pid = 12345
+
+	await process.close()
+
+	assert_bool(process._close_complete).is_false()
+	assert_bool(process._close_started).is_false()
+	assert_str(process.get_close_error()).contains("Unable to confirm")
+	process.queue_free()
 
 
 func test_close_is_idempotent_after_the_child_has_been_reaped() -> void:

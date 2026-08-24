@@ -8,3 +8,4 @@ var godot_path: String
 var timeout_seconds := 10.0
 var extra_godot_args: PackedStringArray
 var log_verbosity := "warning"
+var server_port := 0

@@ -11,6 +11,7 @@ func test_launch_options_keep_the_required_defaults() -> void:
 	assert_float(options.timeout_seconds).is_equal(10.0)
 	assert_str(options.log_verbosity).is_equal("warning")
 	assert_array(options.extra_godot_args).is_empty()
+	assert_int(options.server_port).is_equal(0)
 
 
 func test_process_builds_pinned_argv_with_user_separator_last() -> void:

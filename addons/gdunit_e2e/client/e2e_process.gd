@@ -22,6 +22,7 @@ var _token := ""
 var _port := -1
 var _stdout_text := ""
 var _stderr_text := ""
+var _close_error := ""
 var _close_started := false
 var _close_complete := false
 var _dead_confirmed := false
@@ -42,7 +43,7 @@ static func build_arguments(options: E2ELaunchOptions, port_file: String, token:
 		args.append(String(extra_arg))
 	args.append("--")
 	args.append("--gdunit-e2e")
-	args.append("--gdunit-e2e-port=0")
+	args.append("--gdunit-e2e-port=" + str(options.server_port))
 	args.append("--gdunit-e2e-port-file=" + port_file)
 	args.append("--gdunit-e2e-token=" + token)
 	args.append("--gdunit-e2e-log-verbosity=" + options.log_verbosity)
@@ -82,6 +83,7 @@ func launch(options: E2ELaunchOptions) -> E2EResult:
 	child_options.timeout_seconds = options.timeout_seconds
 	child_options.extra_godot_args = options.extra_godot_args
 	child_options.log_verbosity = options.log_verbosity
+	child_options.server_port = options.server_port
 	var args := build_arguments(child_options, _port_file, _token)
 
 	# Own the client before any asynchronous launch polling. This keeps the
@@ -102,6 +104,7 @@ func launch(options: E2ELaunchOptions) -> E2EResult:
 	_exit_code = -1
 	_stdout_text = ""
 	_stderr_text = ""
+	_close_error = ""
 	_close_started = false
 	_close_complete = false
 	_dead_confirmed = false
@@ -138,6 +141,7 @@ func close() -> void:
 	if _close_complete or _close_started:
 		return
 	_close_started = true
+	_close_error = ""
 
 	var client = _client
 	if is_instance_valid(client):
@@ -149,9 +153,15 @@ func close() -> void:
 		client.queue_free()
 		_client = null
 
-	await _wait_for_death(SHUTDOWN_GRACE_MILLIS)
-	if is_running():
-		await _force_kill()
+	var death_observed := _pid <= 0
+	if _pid > 0:
+		death_observed = await _wait_for_death(SHUTDOWN_GRACE_MILLIS)
+		if not death_observed:
+			death_observed = await _force_kill()
+	if not death_observed or (_pid > 0 and not _dead_confirmed):
+		_close_error = "Unable to confirm Godot child PID %d exited" % _pid
+		_close_started = false
+		return
 	_record_exit_code()
 	await _drain_pipes()
 	_remove_port_file()
@@ -191,6 +201,10 @@ func get_stderr() -> String:
 func get_exit_code() -> int:
 	_record_exit_code()
 	return _exit_code
+
+
+func get_close_error() -> String:
+	return _close_error
 
 
 func get_port() -> int:
@@ -234,13 +248,18 @@ func _failure(message: String) -> E2EResult:
 	return E2EResultScript.new(false, null, message)
 
 
-func _wait_for_death(timeout_millis: int) -> void:
+func _wait_for_death(timeout_millis: int) -> bool:
+	if _pid <= 0:
+		return false
 	var deadline := Time.get_ticks_msec() + timeout_millis
 	while is_running() and Time.get_ticks_msec() < deadline:
 		await _wait_millis(POLL_INTERVAL_MILLIS)
+	return _dead_confirmed
 
 
-func _force_kill() -> void:
+func _force_kill() -> bool:
+	if _pid <= 0:
+		return false
 	var deadline := Time.get_ticks_msec() + SHUTDOWN_GRACE_MILLIS
 	while is_running() and Time.get_ticks_msec() < deadline:
 		OS.kill(_pid)
@@ -248,6 +267,7 @@ func _force_kill() -> void:
 	if is_running():
 		OS.kill(_pid)
 		await _wait_for_death(POLL_INTERVAL_MILLIS * 4)
+	return _dead_confirmed
 
 
 func _wait_millis(millis: int) -> void:

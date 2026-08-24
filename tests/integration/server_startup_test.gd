@@ -62,16 +62,20 @@ func test_non_hello_first_command_is_rejected_and_disconnected() -> void:
 	assert_int(peer.put_data(frame)).is_equal(OK)
 
 	var response: Dictionary = await _read_frame(peer)
-	peer.disconnect_from_host()
 
 	assert_str(response.get("error", "")).is_equal("not_authenticated")
 	assert_str(response.get("message", "")).contains("First command")
+	var disconnected_by_server: bool = await _wait_for_peer_disconnect(peer)
+	assert_bool(disconnected_by_server).is_true()
+	peer.disconnect_from_host()
 
 
 func test_invalid_startup_configuration_never_listens_and_parent_reaps_child() -> void:
 	var options = _options()
 	options.timeout_seconds = 0.25
 	options.log_verbosity = "invalid"
+	var target_port := _unused_local_port()
+	options.server_port = target_port
 	_process = E2EProcessScript.new(self)
 	add_child(_process)
 
@@ -81,6 +85,7 @@ func test_invalid_startup_configuration_never_listens_and_parent_reaps_child() -
 	assert_bool(_process.is_running()).is_false()
 	assert_bool(OS.is_process_running(_process.get_pid())).is_false()
 	assert_int(_process.get_port()).is_equal(-1)
+	assert_bool(await _is_port_listening(target_port)).is_false()
 
 
 func test_authenticated_disconnect_exits_child_after_orphan_grace() -> void:
@@ -121,6 +126,42 @@ func _options():
 	options.timeout_seconds = 5.0
 	options.extra_godot_args = PackedStringArray(["--headless", "--quiet"])
 	return options
+
+
+func _unused_local_port() -> int:
+	var server := TCPServer.new()
+	assert_int(server.listen(0, "127.0.0.1")).is_equal(OK)
+	var port := server.get_local_port()
+	server.stop()
+	return port
+
+
+func _is_port_listening(port: int) -> bool:
+	var peer := StreamPeerTCP.new()
+	var connect_error := peer.connect_to_host("127.0.0.1", port)
+	if connect_error != OK:
+		return false
+	var deadline := Time.get_ticks_msec() + 500
+	while Time.get_ticks_msec() < deadline:
+		peer.poll()
+		if peer.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			peer.disconnect_from_host()
+			return true
+		if peer.get_status() == StreamPeerTCP.STATUS_ERROR or peer.get_status() == StreamPeerTCP.STATUS_NONE:
+			break
+		await await_millis(25)
+	peer.disconnect_from_host()
+	return false
+
+
+func _wait_for_peer_disconnect(peer: StreamPeerTCP) -> bool:
+	var deadline := Time.get_ticks_msec() + 1000
+	while Time.get_ticks_msec() < deadline:
+		peer.poll()
+		if peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			return true
+		await await_millis(25)
+	return false
 
 
 func _read_frame(peer: StreamPeerTCP):
