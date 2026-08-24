@@ -4,7 +4,6 @@ extends Node
 const E2EClientScript = preload("e2e_client.gd")
 const E2EResultScript = preload("e2e_result.gd")
 
-const DEFAULT_GODOT_PATH := "/Users/chanwaichan/.local/bin/godot"
 const POLL_INTERVAL_MILLIS := 25
 const SHUTDOWN_GRACE_MILLIS := 1000
 const PIPE_DRAIN_MILLIS := 500
@@ -221,11 +220,7 @@ func get_port_file() -> String:
 
 func _default_godot_path() -> String:
 	var configured := OS.get_environment("GODOT_BIN")
-	if not configured.is_empty():
-		return configured
-	if FileAccess.file_exists(DEFAULT_GODOT_PATH):
-		return DEFAULT_GODOT_PATH
-	return OS.get_executable_path()
+	return configured if not configured.is_empty() else OS.get_executable_path()
 
 
 func _is_same_project(path: String) -> bool:

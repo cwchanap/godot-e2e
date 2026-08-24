@@ -122,7 +122,6 @@ func _launch():
 func _options():
 	var options = LaunchOptions.new()
 	options.project_path = ProjectSettings.globalize_path("res://")
-	options.godot_path = "/Users/chanwaichan/.local/bin/godot"
 	options.timeout_seconds = 5.0
 	options.extra_godot_args = PackedStringArray(["--headless", "--quiet"])
 	return options

@@ -42,3 +42,11 @@ func test_process_builds_pinned_argv_with_user_separator_last() -> void:
 	assert_int(args.find("--")).is_equal(6)
 	for user_arg in args.slice(args.find("--") + 1):
 		assert_bool(String(user_arg).begins_with("--gdunit-e2e")).is_true()
+
+
+func test_process_source_has_no_developer_local_godot_path() -> void:
+	var source := FileAccess.get_file_as_string(
+		"res://addons/gdunit_e2e/client/e2e_process.gd"
+	)
+
+	assert_bool(source.contains("/Users/")).is_false()
