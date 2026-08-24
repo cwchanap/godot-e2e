@@ -1,8 +1,7 @@
 extends GdUnitTestSuite
 
 const FakeE2EServer = preload("res://tests/helpers/fake_e2e_server.gd")
-const E2EFraming = preload("res://addons/gdunit_e2e/protocol/e2e_framing.gd")
-const E2EProtocol = preload("res://addons/gdunit_e2e/protocol/e2e_protocol.gd")
+const Protocol = preload("res://addons/gdunit_e2e/protocol/e2e_protocol.gd")
 
 var _server
 var _client
@@ -183,10 +182,10 @@ func test_oversized_response_declaration_fails_before_body_is_needed() -> void:
 		return
 	_server.queue_response({"id": 1, "ok": true})
 	var header := PackedByteArray([
-		((E2EProtocol.MAX_FRAME_BYTES + 1) >> 24) & 0xff,
-		((E2EProtocol.MAX_FRAME_BYTES + 1) >> 16) & 0xff,
-		((E2EProtocol.MAX_FRAME_BYTES + 1) >> 8) & 0xff,
-		(E2EProtocol.MAX_FRAME_BYTES + 1) & 0xff,
+		((Protocol.MAX_FRAME_BYTES + 1) >> 24) & 0xff,
+		((Protocol.MAX_FRAME_BYTES + 1) >> 16) & 0xff,
+		((Protocol.MAX_FRAME_BYTES + 1) >> 8) & 0xff,
+		(Protocol.MAX_FRAME_BYTES + 1) & 0xff,
 	])
 	_server.queue_raw(header)
 	assert_bool((await client.connect_to_server(_server.get_port(), "token")).ok).is_true()

@@ -4,7 +4,7 @@ extends Node
 const E2EProtocol = preload("../protocol/e2e_protocol.gd")
 const E2EFraming = preload("../protocol/e2e_framing.gd")
 const E2ESerializer = preload("../protocol/e2e_serializer.gd")
-const E2EResultScript = preload("e2e_result.gd")
+const E2EResult = preload("e2e_result.gd")
 
 signal _pending_completed(result)
 
@@ -27,7 +27,7 @@ func connect_to_server(
 	port: int,
 	token: String,
 	timeout_seconds := E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS,
-):
+) -> E2EResult:
 	if _pending_id != 0:
 		return _failure("A command is already in flight")
 	if not is_inside_tree():
@@ -62,7 +62,7 @@ func send_command(
 	action: String,
 	parameters := {},
 	timeout_seconds := E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS,
-):
+) -> E2EResult:
 	if _pending_id != 0:
 		return _failure("A command is already in flight")
 	if not is_session_open():
@@ -205,9 +205,9 @@ func _handle_response(response: Dictionary) -> void:
 	var logs := _extract_logs(response)
 	var result
 	if response.has("error"):
-		result = E2EResultScript.new(false, _response_value(response), _render_error(response), logs)
+		result = E2EResult.new(false, _response_value(response), _render_error(response), logs)
 	else:
-		result = E2EResultScript.new(true, _response_value(response), "", logs)
+		result = E2EResult.new(true, _response_value(response), "", logs)
 	if _pending_action == "hello" and not result.ok:
 		_drop_peer()
 	_finish_pending(result)
@@ -291,7 +291,7 @@ func _allocate_id() -> int:
 
 
 func _failure(message: String):
-	return E2EResultScript.new(false, null, message, [])
+	return E2EResult.new(false, null, message, [])
 
 
 func _drop_peer() -> void:

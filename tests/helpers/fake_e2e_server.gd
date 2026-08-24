@@ -1,6 +1,6 @@
 extends Node
 
-const E2EFraming = preload("res://addons/gdunit_e2e/protocol/e2e_framing.gd")
+const Framing = preload("res://addons/gdunit_e2e/protocol/e2e_framing.gd")
 
 var received_messages: Array = []
 
@@ -90,7 +90,7 @@ func _read_requests() -> void:
 		_recv_buffer.append_array(result[1])
 
 	while _peer != null:
-		var extracted := E2EFraming.try_extract(_recv_buffer)
+		var extracted := Framing.try_extract(_recv_buffer)
 		if not extracted.get("complete", false):
 			return
 		var consumed: int = extracted.get("consumed_bytes", 0)
@@ -113,7 +113,7 @@ func _queue_next_response() -> void:
 	if queued.get("kind", "") == "raw":
 		frame = queued.get("data", PackedByteArray())
 	else:
-		frame = E2EFraming.encode_json(queued.get("data", {}))
+		frame = Framing.encode_json(queued.get("data", {}))
 	_outgoing = {
 		"frame": frame,
 		"offset": 0,
