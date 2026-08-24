@@ -1,6 +1,6 @@
 # GdUnit E2E Addon Design
 
-**Status:** Approved for implementation planning  
+**Status:** Reviewed and approved for implementation  
 **Date:** 2026-08-23  
 **Repository:** `cwchanap/godot-e2e`  
 **License:** Apache-2.0  
@@ -8,122 +8,120 @@
 
 ## 1. Summary
 
-`godot-e2e` is a standalone Godot addon for writing true out-of-process end-to-end tests in GDScript while keeping GdUnit4 as the only test runner, assertion library, lifecycle framework, CLI, and reporter.
+`godot-e2e` is a standalone Godot addon for writing true out-of-process end-to-end tests in GDScript while using GdUnit4 as the only test runner, assertion library, lifecycle framework, CLI, and reporter.
 
-A GdUnit4 test process launches a second Godot process containing the game under test. A small automation-server autoload runs in that child only when explicitly activated. The GdUnit process controls the child through a non-blocking GDScript client over localhost TCP.
+A GdUnit4 test launches the same Godot project as a separate child process, optionally selecting a fixture/game scene with `--scene`. A small automation-server autoload runs inside the child only when `--gdunit-e2e` is present. The parent controls the child over a localhost-only, token-paired TCP connection using a non-blocking GDScript client.
 
-The child-side implementation is adapted from `RandallLiuXin/godot-e2e` at immutable commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36`. That pinned GDScript server is the protocol and behavior baseline. We rename activation flags/autoload names, bind explicitly to loopback, share framing helpers, and add a 16 MiB parser limit, but we do not invent a second wire format.
+The server implementation is adapted from `RandallLiuXin/godot-e2e` at immutable commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36`. That pinned GDScript server is the v1 wire and behavior baseline. Python/pytest code is reference material only and is not a runtime dependency.
 
 ## 2. Problem
 
-GdUnit4 already covers unit tests and in-process scene/integration tests well. Its scene runner should remain the default for most tests, but it does not create an independent application process boundary:
+GdUnit4 already covers unit tests and in-process scene tests well. Those remain the default for most test coverage. A smaller set of flows benefits from a real second Godot process because it exercises process startup/shutdown, prevents direct access to local scene objects, and gives tests a black-box boundary around the running game.
 
-- a game crash can terminate the test runner;
-- application startup/shutdown is not exercised as a separate process;
-- tests can accidentally reach directly into local scene objects;
-- child stdout/stderr and startup failures are not naturally part of the test boundary.
-
-This addon adds only the out-of-process layer needed for a small number of critical flows.
+The addon must add that process boundary without becoming another general-purpose test framework.
 
 ## 3. Goals
 
 The MVP must:
 
-1. Let a GdUnit4 GDScript test launch a Godot project as a separate child process.
-2. Enable the automation server only with `--gdunit-e2e`.
-3. Bind only to `127.0.0.1`.
-4. Pair launcher and child with a random per-launch token.
-5. Preserve the pinned upstream server's four-byte big-endian length-prefixed UTF-8 JSON wire behavior and serializer tags.
-6. Preserve the pinned upstream command-handler surface in the adapted server so the fork stays small.
-7. Provide a non-blocking GDScript client with one in-flight command.
-8. Provide a small high-level GdUnit-facing API for the commands needed by the MVP.
-9. Use explicit `E2EResult` values at the transport boundary instead of pretending GDScript has Python-style exceptions.
-10. Make server waits and client deadlines deterministic by applying a client-side margin.
-11. Capture useful failure diagnostics without replacing the primary GdUnit failure.
-12. Cleanly terminate the child and hard-kill it when graceful shutdown fails.
-13. Run the core integration suite on Linux and Windows CI.
-14. Deliver the MVP through one PR with reviewable task-level commits.
+1. Let a GdUnit4 GDScript test launch a separate Godot child process.
+2. Keep GdUnit4 responsible for discovery, assertions, lifecycle, CLI, and reports.
+3. Activate the automation server only with `--gdunit-e2e`.
+4. Bind the server only to `127.0.0.1`.
+5. Pair parent and child with the pinned upstream token handshake.
+6. Preserve upstream four-byte big-endian length-prefixed UTF-8 JSON framing, command names, command-specific response shapes, and `_t` Variant tags.
+7. Provide a non-blocking in-tree GDScript client with one in-flight command.
+8. Provide a small high-level API for inspection, input, synchronization, scenes, screenshots, and raw commands.
+9. Automatically capture diagnostics when a GdUnit test has failed.
+10. Close and reap child processes on normal teardown and self-terminate orphaned children after abnormal parent loss.
+11. Validate process behavior on Linux and Windows CI.
+12. Deliver the MVP in one feature PR with task-level TDD commits.
 
 ## 4. Non-goals
 
 The MVP will not:
 
-- replace GdUnit4 discovery, assertions, reports, retries, or CLI;
-- provide a Python runtime dependency or pytest integration;
+- replace any GdUnit4 runner/assertion/reporting behavior;
+- add Python or pytest runtime dependencies;
 - provide C# test authoring;
-- claim verified C# game-target support before a dedicated .NET fixture exists;
+- claim verified Godot .NET target support until a dedicated fixture exists;
 - add Playwright-style locators or retrying `expect()` assertions;
-- add process pools or parallel game sessions;
+- add multiple simultaneous sessions or a process pool;
+- add suite-level child-process reuse; each test owns its launched child in the MVP;
 - support remote hosts or non-loopback binding;
-- add video recording, trace viewers, record/replay, or editor UI;
+- add video, tracing, recording, or editor UX;
 - build a generic RPC framework;
 - vendor GdUnit4 in release artifacts;
-- target exported/mobile builds in the MVP;
-- redesign the pinned upstream wire response envelopes;
-- translate Python exception classes into a parallel GDScript error taxonomy.
+- target exported/mobile builds.
 
 ## 5. Product boundary
 
 GdUnit4 owns:
 
-- test discovery;
+- test discovery and selection;
 - assertions and failure state;
-- suite/test lifecycle hooks;
-- command-line execution;
+- `before_test()` / `after_test()` lifecycle;
+- CLI execution;
 - HTML/JUnit reporting;
-- test selection/filtering.
+- test timeout/interruption behavior;
+- temporary test directories and timeout-safe `await_millis()` waits.
 
 `godot-e2e` owns:
 
-- child Godot process lifecycle;
-- child automation-server activation;
-- localhost transport/framing/token pairing;
+- child-process launch/reap;
+- automation-server activation;
+- localhost TCP framing and token pairing;
 - remote command execution;
-- synchronization commands;
-- screenshots, scene-tree capture, engine-log deltas, and child stdout/stderr;
-- the GDScript-facing remote-game API.
+- deterministic server-side waits;
+- screenshots, scene-tree snapshots, logs, and child stdout/stderr;
+- automatic failure-artifact capture;
+- orphan-child self-termination;
+- the GDScript-facing remote-game facade.
 
 ## 6. Architecture
 
 ```text
 GdUnit4 test process
-├── GDScript test suite
-├── GdUnitE2ETestSuite        <- owns child-process Nodes in the SceneTree
-├── GdUnitE2EGame             <- RefCounted facade, never the tree owner
-└── E2EProcess (Node)
-    └── E2EClient (Node)       <- _process() polls non-blocking TCP
-          │
-          │ 127.0.0.1 TCP
-          │ [u32 big-endian length][UTF-8 JSON]
-          ▼
-Child Godot process
-├── normal game main scene
+└── GdUnitE2ETestSuite
+    └── E2EProcess (Node, in SceneTree)
+        ├── E2EClient (Node, in SceneTree)
+        └── GdUnitE2EGame (RefCounted facade)
+                    │
+                    │ 127.0.0.1 TCP
+                    │ [u32 BE length][UTF-8 JSON]
+                    ▼
+Child Godot process (same project)
+├── selected game/fixture scene
 └── GdUnitE2EAutomationServer autoload
-    ├── token hello handshake
-    ├── pinned upstream command surface
+    ├── token-first handshake
+    ├── retained upstream command handler
     ├── deferred waits
     ├── engine-log capture
+    ├── orphan watchdog
     └── screenshot/tree access
 ```
 
-### 6.1 Game remains the TCP server
+### 6.1 SceneTree ownership is mandatory
 
-The upstream child-side server already binds an ephemeral port and reports it through a port file. Keeping that direction minimizes divergence. The GdUnit process still owns lifecycle because it launches, parents, monitors, and terminates the child.
+`E2EClient` performs network polling from `_process()`. A `Node` outside the SceneTree never receives `_process()`, so ownership is an invariant, not an implementation detail.
 
-### 6.2 Client is asynchronous and must be in-tree
+`GdUnitE2ETestSuite.launch_game()` must:
 
-The Python reference client can block a Python thread. A GDScript client running inside the GdUnit Godot process must not block the main loop.
+```text
+create E2EProcess
+→ add_child(process)
+→ process creates/adds E2EClient
+→ launch/connect/handshake
+→ return GdUnitE2EGame
+```
 
-`E2EClient` therefore extends `Node`, polls `StreamPeerTCP` from `_process()`, accumulates framed responses, and resolves one pending request through `await`-friendly signals/state.
+`GdUnitE2EGame` is only a facade. It must not own the polling Nodes.
 
-A `Node` that is not inside the active SceneTree will not receive `_process()`. Therefore:
+### 6.2 One child per test in the MVP
 
-- `GdUnitE2ETestSuite.launch_game()` creates `E2EProcess`, adds it as a child of the suite, then launches/connects;
-- `E2EProcess` adds `E2EClient` as its child before connecting;
-- `close_game()` closes the process, removes it from the tree, and frees it;
-- a caller using `E2EProcess` directly from a normal `GdUnitTestSuite` must `add_child(process)` before awaiting launch.
+Every process launched through the base suite is tracked for the current test and is closed from `after_test()`. This makes cleanup deterministic and gives failure-artifact capture one authoritative lifecycle hook.
 
-`GdUnitE2EGame` is `RefCounted`; it references the live process/client but never owns the SceneTree lifetime.
+Process reuse across multiple test cases is deferred until there is a demonstrated performance need.
 
 ## 7. Repository layout
 
@@ -143,7 +141,6 @@ A `Node` that is not inside the active SceneTree will not receive `_process()`. 
 │   │   └── log_capture.gd
 │   ├── client/
 │   │   ├── e2e_result.gd
-│   │   ├── e2e_pending_request.gd
 │   │   ├── e2e_client.gd
 │   │   ├── e2e_launch_options.gd
 │   │   ├── e2e_process.gd
@@ -151,23 +148,28 @@ A `Node` that is not inside the active SceneTree will not receive `_process()`. 
 │   └── gdunit/
 │       └── gdunit_e2e_test_suite.gd
 ├── tests/
+│   ├── helpers/fake_e2e_server.gd
+│   ├── fixtures/minimal/
+│   │   ├── main.tscn
+│   │   └── main.gd
 │   ├── unit/
-│   ├── integration/
-│   ├── helpers/
-│   └── fixtures/minimal/
-├── scripts/
-├── docs/
+│   └── integration/
+├── scripts/bootstrap_gdunit4.sh
+├── scripts/package_release.sh
+├── .github/workflows/ci.yml
 ├── project.godot
 ├── README.md
 ├── LICENSE
 └── NOTICE
 ```
 
-GdUnit4 is installed separately at `res://addons/gdUnit4` for development/consumer projects and is excluded from release archives.
+There is no nested fixture `project.godot`. Integration tests launch the repository's own project and select `res://tests/fixtures/minimal/main.tscn`. This guarantees the child uses the exact addon/autoload under test instead of a copied fixture addon.
 
-## 8. Activation and child argv
+GdUnit4 is installed separately at `res://addons/gdUnit4` for development/CI and is excluded from release artifacts.
 
-Enabling the addon registers an autoload named:
+## 8. Activation and launch arguments
+
+The addon registers an autoload named:
 
 ```text
 GdUnitE2EAutomationServer
@@ -179,43 +181,56 @@ pointing to:
 res://addons/gdunit_e2e/server/automation_server.gd
 ```
 
-The autoload is inert unless `OS.get_cmdline_user_args()` contains `--gdunit-e2e`.
+The autoload is inert unless `OS.get_cmdline_user_args()` includes `--gdunit-e2e`.
 
-The launcher uses the current executable by default:
+Typical child argv:
 
 ```text
-<godot executable>
+<godot>
   --path <absolute project path>
-  <extra Godot engine args>
+  --scene res://tests/fixtures/minimal/main.tscn
+  <other explicit Godot args>
   --
   --gdunit-e2e
   --gdunit-e2e-port=0
-  --gdunit-e2e-port-file=<absolute temp file>
+  --gdunit-e2e-port-file=<GdUnit temp dir>/port_<token>.txt
   --gdunit-e2e-token=<random token>
   --gdunit-e2e-log-verbosity=warning
 ```
 
-Only E2E user arguments are passed after `--`. GdUnit CLI arguments are not forwarded to the child, so launching the game does not recursively invoke the GdUnit CLI.
+No GdUnit CLI arguments are forwarded to the child. The child is still the same project, so normal project autoloads—including any GdUnit4 autoloads configured by the project—load normally and must be inert during ordinary game execution.
 
-The child is still the same Godot project. Normal project autoloads therefore load in the child exactly as they do on F5, including any GdUnit-related autoloads configured by the consumer. Those autoloads must already be safe/inert during a normal game run. The MVP does not create a shadow project to suppress them.
+### 8.1 Fail-closed configuration
 
-The E2E flag names intentionally differ from upstream `--e2e` names so both addons cannot activate accidentally.
+Invalid E2E-only startup flags must prevent the automation server from listening and emit `push_error()`; they must not silently fall back to a shared port or verbosity.
 
-### 8.1 Invalid configuration
+Examples:
 
-When `--gdunit-e2e` is present, invalid E2E startup values are fatal to automation startup:
+```text
+--gdunit-e2e-port=abc
+--gdunit-e2e-port=70000
+--gdunit-e2e-port=0 without --gdunit-e2e-port-file
+--gdunit-e2e-log-verbosity=verbose
+```
 
-- non-integer or out-of-range `--gdunit-e2e-port`;
-- `--gdunit-e2e-port=0` without a writable port-file path;
-- unsupported log verbosity.
+### 8.2 Real ephemeral port allocation
 
-The config parser exposes the validation error, the autoload emits `push_error()`, disables processing, and does not listen. It must not silently fall back to a shared default port.
+For `--gdunit-e2e-port=0`, the adapted server uses:
 
-## 9. Wire contract
+```gdscript
+var error := _server.listen(0, "127.0.0.1")
+var actual_port := _server.get_local_port()
+```
 
-The pinned GDScript server at commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36` is the v1 behavioral contract. The addon may extract common framing/serializer helpers, but emitted/accepted payload shapes remain compatible with that server.
+Godot 4.5 passes port `0` through to the OS socket bind and `get_local_port()` reads back the assigned port. The upstream random 10000-60000 retry loop is removed.
 
-### 9.1 Framing
+For an explicitly configured nonzero port, the server still binds only `127.0.0.1`.
+
+## 9. Upstream wire contract
+
+The pinned GDScript server is the v1 contract. The addon changes activation names, loopback binding, size safety, and orphan teardown; it does not invent a second wire model.
+
+### 9.1 Framing and size limit
 
 Each message is:
 
@@ -224,14 +239,25 @@ Each message is:
 [UTF-8 JSON payload]
 ```
 
-`E2EFraming` is shared by the client and adapted server so the frame implementation cannot drift.
+`E2EProtocol.MAX_FRAME_BYTES` is `16 * 1024 * 1024`.
 
-The parser enforces `MAX_FRAME_BYTES = 16 * 1024 * 1024`:
+The rule exists primarily to prevent allocation based on an untrusted length prefix:
 
-- client rejects an oversized request locally before writing;
-- server closes the peer on an oversized inbound declaration;
-- client closes the peer if an oversized response declaration is received;
-- server disconnects rather than inventing a new wire response envelope when a response itself cannot be encoded within the cap.
+- `E2EFraming.try_extract()` rejects an inbound declared size above the cap before allocating/awaiting the body;
+- the client rejects an oversized request locally before writing;
+- the server closes a peer that sends an oversized request declaration;
+- the client closes a peer that declares an oversized response;
+- when a server command produces a response above the cap, the server sends the compact upstream-shaped error below instead of silently dropping the connection:
+
+```json
+{
+  "id": 7,
+  "error": "response_too_large",
+  "message": "Response exceeded the 16 MiB frame limit"
+}
+```
+
+If even the compact error cannot be written, disconnect is the last-resort fallback.
 
 ### 9.2 Request example
 
@@ -244,11 +270,9 @@ The parser enforces `MAX_FRAME_BYTES = 16 * 1024 * 1024`:
 }
 ```
 
-### 9.3 Success examples are command-specific
+### 9.3 Command-specific success examples
 
-The server does not wrap every success in a new `{ok, result}` envelope.
-
-`get_property` with a `Vector2` uses the upstream `_t` serializer tag:
+A `Vector2` property uses the pinned upstream serializer tag:
 
 ```json
 {
@@ -261,7 +285,7 @@ The server does not wrap every success in a new `{ok, result}` envelope.
 }
 ```
 
-`node_exists` returns its own field:
+`node_exists` returns:
 
 ```json
 {
@@ -270,7 +294,7 @@ The server does not wrap every success in a new `{ok, result}` envelope.
 }
 ```
 
-Mutating commands commonly return:
+Mutations commonly return:
 
 ```json
 {
@@ -279,11 +303,11 @@ Mutating commands commonly return:
 }
 ```
 
-The client deserializes values using the pinned upstream tags (`v2`, `v2i`, `v3`, `v3i`, `r2`, `r2i`, `col`, `t2d`, `np`, `_unknown`). It does not introduce `__godot_type`.
+The serializer preserves upstream tags `v2`, `v2i`, `v3`, `v3i`, `r2`, `r2i`, `col`, `t2d`, `np`, and `_unknown`. There is no `__godot_type` envelope.
 
-### 9.4 Error examples remain upstream-shaped
+### 9.4 Error handling
 
-A missing node from `get_property` is:
+A missing node may be returned exactly as:
 
 ```json
 {
@@ -292,11 +316,11 @@ A missing node from `get_property` is:
 }
 ```
 
-Some existing upstream commands already return a short error string plus a `message`; those shapes are preserved as-is. The new client treats the presence of `error` as failure and produces one readable `E2EResult.message`; it does not define a parallel `node_not_found`/`invalid_argument` enum for the framework.
+Some retained upstream commands already use both `error` and `message`. Those responses are preserved. The client treats presence of `error` as failure and renders a readable `E2EResult.message`; it does not define a parallel framework error-code taxonomy.
 
 ### 9.5 Handshake
 
-The first command is compatible with the upstream Python client:
+The first command remains compatible with the upstream Python client:
 
 ```json
 {
@@ -307,81 +331,88 @@ The first command is compatible with the upstream Python client:
 }
 ```
 
-The pinned GDScript server validates the token and first-command ordering. It does not validate `protocol_version`; this addon keeps that behavior in the MVP. The field remains on the client hello for wire compatibility and future evolution.
+The pinned GDScript server validates first-command ordering and token equality but does not validate `protocol_version`. The field stays on the client hello for compatibility; the MVP does not add a new validation branch.
 
-A successful hello remains command-specific:
+## 10. Server surface and wrapped API
 
-```json
-{
-  "id": 1,
-  "ok": true,
-  "godot_version": "4.5.0",
-  "server_version": "0.1.0"
-}
+### 10.1 Retained server surface
+
+Keep the pinned command-handler surface rather than deleting unwrapped commands:
+
+```text
+node_exists get_property set_property call_method
+find_by_group query_nodes find_nodes node_actionable get_tree batch
+input_key input_action input_mouse_button input_mouse_motion click_node hover_node
+wait_process_frames wait_physics_frames wait_seconds
+wait_for_node wait_for_signal wait_for_property
+get_scene change_scene reload_scene
+screenshot set_log_verbosity set_log_buffer_size quit
 ```
 
-Token pairing is not expanded into a new security model. The server is loopback-only and the token exists to pair the launcher with its child process.
+This minimizes fork maintenance. The MVP does not write exhaustive new characterization tests for every inherited command.
 
-## 10. Server surface versus wrapped MVP surface
+### 10.2 Wrapped MVP surface
 
-### 10.1 Adapted server surface
-
-Keep the pinned upstream command-handler surface instead of deleting commands merely because the first high-level wrapper does not expose them. This minimizes fork diff and keeps raw `send_command()` useful.
-
-Retained server commands include the pinned upstream commands such as:
-
-- `node_exists`, `get_property`, `set_property`, `call_method`;
-- `find_by_group`, `query_nodes`, `find_nodes`, `node_actionable`, `get_tree`, `batch`;
-- `input_key`, `input_action`, `input_mouse_button`, `input_mouse_motion`, `click_node`, `hover_node`;
-- `wait_process_frames`, `wait_physics_frames`, `wait_seconds`, `wait_for_node`, `wait_for_signal`, `wait_for_property`;
-- `get_scene`, `change_scene`, `reload_scene`;
-- `screenshot`, `set_log_verbosity`, `set_log_buffer_size`, `quit`.
-
-The MVP does not add convenience wrappers for every retained command.
-
-### 10.2 High-level `GdUnitE2EGame` wrappers
+`GdUnitE2EGame` wraps only the paths used by the MVP:
 
 Inspection:
 
-- `node_exists(path)`
-- `get_property(path, property)`
-- `set_property(path, property, value)`
-- `call_method(path, method, args)`
-- `get_tree(path = "/root", depth = 4)`
-- `get_scene()`
+- `node_exists`
+- `get_property`
+- `set_property`
+- `call_method`
+- `get_tree`
+- `get_scene`
 
 Interaction:
 
-- `input_action(action_name, pressed, strength)`
-- `press_action(action_name, strength)`
-- `input_key(keycode, pressed, physical)`
-- `input_mouse_button(x, y, button, pressed)`
-- `click_node(path)`
+- `input_action`
+- `press_action`
+- `input_key`
+- `input_mouse_button`
+- `click_node`
 
 Synchronization:
 
-- `wait_process_frames(count)`
-- `wait_physics_frames(count)`
-- `wait_seconds(seconds)`
-- `wait_for_node(path, timeout)`
-- `wait_for_property(path, property, value, timeout)`
-- `wait_for_signal(path, signal_name, timeout)`
+- `wait_process_frames`
+- `wait_physics_frames`
+- `wait_seconds`
+- `wait_for_node`
+- `wait_for_property`
+- `wait_for_signal`
 
-Scene lifecycle:
+Scene/diagnostics:
 
-- `change_scene(scene_path)`
-- `reload_scene()`
+- `change_scene`
+- `reload_scene`
+- `screenshot`
+- raw `send_command`
 
-Diagnostics/lifecycle:
+Unwrapped inherited commands remain reachable through raw `send_command()`.
 
-- `screenshot(save_path)`
-- `quit(exit_code)`
-- collected response-log deltas
-- raw `send_command(action, parameters, timeout)` escape hatch.
+## 11. Client model
 
-## 11. Result and failure model
+`E2EClient` extends `Node` and is always inside the SceneTree before connect/await work begins.
 
-### 11.1 Transport result
+One in-flight command is allowed, so request state stays directly on the client rather than adding a separate pending-request class:
+
+```gdscript
+var _pending_id: int = 0
+var _pending_deadline_ms: int = 0
+var _pending_action: String = ""
+```
+
+The public state method is:
+
+```gdscript
+func is_session_open() -> bool
+```
+
+It must not be named `is_connected()`, which conflicts with `Object.is_connected(signal, callable)`.
+
+The client hardcodes `127.0.0.1`; the MVP has no host parameter.
+
+## 12. Result and failure model
 
 ```gdscript
 class_name E2EResult
@@ -393,23 +424,11 @@ var message: String
 var logs: Array
 ```
 
-`E2EClient` returns `E2EResult` for connection, handshake, and raw commands.
+Raw client operations return `E2EResult`.
 
-For a server response containing `error`, `ok` is false and `message` is the server's readable message. When an upstream response has both `error` and `message`, the client preserves both pieces in the rendered message without creating a framework-level error-code enum.
-
-Transport failures use readable messages such as connection loss, timeout, invalid frame, or oversize frame.
-
-### 11.2 GdUnit-facing wrappers
-
-Convenience wrappers translate a failed `E2EResult` into the public GdUnit `fail(message)` API and return a safe fallback (`false`, `null`, empty array/dictionary/string as appropriate).
-
-`fail()` records failure but does not terminate the current GDScript function. Therefore tests must stop explicitly when later steps depend on a failed launch/remote call.
-
-Minimal example:
+`GdUnitE2EGame` convenience methods convert a failed result into the public GdUnit `fail(message)` API and return a safe fallback value. `fail()` records failure but does not stop GDScript execution, so dependent test flow must explicitly stop:
 
 ```gdscript
-extends GdUnitE2ETestSuite
-
 func test_start_game_spawns_player() -> void:
     var game := await launch_game()
     if is_failure():
@@ -426,68 +445,97 @@ func test_start_game_spawns_player() -> void:
     assert_bool(await game.node_exists("/root/Game/Player")).is_true()
 ```
 
-The raw `game.send_command()` escape hatch returns `E2EResult` without automatically failing the suite. This supports deliberate negative-path tests and direct artifact tests.
+Raw `game.send_command()` returns `E2EResult` without automatically failing the suite, which supports negative-path tests and direct diagnostic characterization.
 
-## 12. Timeout policy
+## 13. Timeout policy
 
-The low-level client has `DEFAULT_COMMAND_TIMEOUT_SECONDS = 5.0` for ordinary commands and `WAIT_MARGIN_SECONDS = 1.0`.
+`E2EProtocol.DEFAULT_COMMAND_TIMEOUT_SECONDS = 5.0` and `WAIT_MARGIN_SECONDS = 1.0`.
 
-Server-side wait duration and client-side transport deadline are separate concepts. A client deadline must always be later than the server's expected completion:
+Server-side wait duration and client transport deadline are distinct:
 
 - `wait_for_node/property/signal(timeout)` uses client deadline `timeout + WAIT_MARGIN_SECONDS`;
 - `wait_seconds(seconds)` uses `seconds + WAIT_MARGIN_SECONDS`;
-- scene-change/reload wrappers use the command timeout plus the same margin because the server resolves them asynchronously;
-- raw callers can pass an explicit client timeout when exercising retained server commands;
-- frame waits use the normal command timeout for ordinary counts and expose a raw explicit timeout if a caller intentionally waits an unusually large number of frames.
+- scene change/reload use `DEFAULT_COMMAND_TIMEOUT_SECONDS + WAIT_MARGIN_SECONDS`;
+- ordinary commands use `DEFAULT_COMMAND_TIMEOUT_SECONDS`;
+- raw `send_command()` accepts an explicit client timeout.
 
-This prevents the client timer from winning a race against a server wait with the same nominal timeout.
+The margin prevents a client timeout racing the server's own timeout result.
 
-## 13. Process lifecycle
+## 14. Child-process lifecycle
 
-`E2EProcess` extends `Node` and uses `OS.get_executable_path()` by default.
+`E2EProcess` extends `Node`, is created with its owning `GdUnitE2ETestSuite`, and uses that suite's public `create_temp_dir()` and `await_millis()` helpers.
 
-### 13.1 Launch
+### 14.1 Temp port file
 
-`OS.execute_with_pipe(path, args, false)` is mandatory. Godot's default is blocking pipes; this framework always requests non-blocking pipes.
+The suite creates a per-test temp directory through GdUnit4. `E2EProcess` builds a unique port-file path inside that directory using the launch token. It does not use `create_temp_file()` because the child must be able to create/write the file without an open parent file handle, especially on Windows.
+
+GdUnit's temp-directory cleanup is the stale-file safety net; `close()` may still remove its own port file best-effort.
+
+### 14.2 Launch
+
+`OS.execute_with_pipe(path, args, false)` is mandatory. The default is blocking; this addon always requests non-blocking pipes.
 
 Launch flow:
 
 ```text
-parent E2EProcess under the GdUnit suite
-→ create token + empty port-file path
+suite add_child(E2EProcess)
+→ create GdUnit temp directory and token-based port path
 → execute_with_pipe(..., blocking=false)
-→ poll port file without reading stdout/stderr
-→ add E2EClient child Node
+→ await suite.await_millis(...) while polling PID + port file
+→ read actual port
+→ E2EProcess add_child(E2EClient)
 → connect 127.0.0.1:<port>
-→ hello/token handshake
+→ token hello
 → return GdUnitE2EGame
 ```
 
-The framework does not live-read stdout/stderr on the main thread during tests.
+The parent does not live-read child stdout/stderr while the child is running.
 
-### 13.2 Shutdown
+### 14.3 Normal shutdown
 
 ```text
 send quit when connected
 → close TCP peer
-→ wait a short bounded grace period for PID exit
+→ await bounded grace period with suite.await_millis()
 → OS.kill(pid) if still running
-→ assert/verify PID is no longer running
-→ drain stdout/stderr from non-blocking pipes with a bounded read loop
+→ verify OS.is_process_running(pid) == false
+→ drain stdout/stderr only after death
 → close pipes
-→ remove port file
+→ best-effort remove port file
 → remove/free E2EProcess Node
 ```
 
-Pipe draining occurs only after the child is dead. Reads stop when `FileAccess.get_error() != OK`, EOF is reached, or a small byte/time bound is reached. Diagnostics are best effort and must never hang suite cleanup.
+Pipe drains are non-blocking and bounded by bytes/time/error/EOF. Diagnostics must never hang test cleanup.
 
-`close()` is idempotent.
+### 14.4 Orphan watchdog
 
-## 14. Failure artifacts
+Normal parent teardown is not sufficient because the GdUnit runner itself can be interrupted, killed, or crash.
 
-Failure diagnostics use two phases so the runner never blocks on live process pipes.
+The adapted child server tracks whether a peer has ever authenticated. If an authenticated peer disconnects without the child already quitting, the server starts:
 
-While the child is reachable, `capture_failure_artifacts(game)` attempts independently:
+```gdscript
+const ORPHAN_GRACE_SECONDS := 2.0
+```
+
+During that grace period it may accept a replacement authenticated peer. If no authenticated peer is present when the grace expires, the child calls `get_tree().quit()`.
+
+A child that never authenticated does not self-quit through this watchdog; launch timeout/kill remains the parent's responsibility.
+
+## 15. Automatic failure artifacts
+
+Failure artifacts are a lifecycle feature, not a manual convention.
+
+`GdUnitE2ETestSuite.after_test()` performs this order for every tracked process from the just-finished test:
+
+```text
+if is_failure() and child is reachable:
+    capture_failure_artifacts(game)
+close/reap child
+write stdout/stderr artifacts after child death
+remove/free process
+```
+
+Reachable-child artifacts:
 
 ```text
 test_output/<suite>/<test>/
@@ -496,91 +544,110 @@ test_output/<suite>/<test>/
 └── engine_logs.json
 ```
 
-During/after `close_game()`, once the PID is dead and pipes are drained, the same directory receives when available:
+Post-death artifacts when available:
 
 ```text
 ├── stdout.log
 └── stderr.log
 ```
 
-Artifact errors are secondary diagnostics and never replace the primary GdUnit failure.
+Each artifact is independent and best-effort. Artifact failure never replaces the primary test failure.
 
-The artifact helper itself is tested without intentionally failing the outer GdUnit run: an integration test sends a known-bad command through raw `send_command()`, asserts `E2EResult.ok == false`, invokes artifact capture directly, closes the game, and asserts the files that are available.
+`capture_failure_artifacts(game)` remains public as an explicit escape hatch for negative-path tests, but ordinary failed tests do not need to call it.
 
-## 15. Upstream adaptation and licensing
+`after()` performs a final best-effort cleanup of any process still tracked because a test hook failed unexpectedly. The child watchdog covers cases where the entire parent process disappears.
 
-Adapt these files from the pinned upstream commit where useful:
+## 16. Upstream adaptation and licensing
 
-- `addons/godot_e2e/automation_server.gd`;
-- `addons/godot_e2e/command_handler.gd`;
-- `addons/godot_e2e/config.gd`;
-- `addons/godot_e2e/json_serializer.gd`;
-- `addons/godot_e2e/log_capture.gd`;
-- `addons/godot_e2e/plugin.gd`.
+Adapt, rather than redesign, these pinned upstream files where useful:
 
-The adapted files live under `addons/gdunit_e2e/` and may be reorganized, but their wire behavior remains pinned unless this design explicitly documents a difference.
+- `addons/godot_e2e/automation_server.gd`
+- `addons/godot_e2e/command_handler.gd`
+- `addons/godot_e2e/config.gd`
+- `addons/godot_e2e/json_serializer.gd`
+- `addons/godot_e2e/log_capture.gd`
+- `addons/godot_e2e/plugin.gd`
 
-Substantially adapted files retain Apache-2.0 notices and state that they were modified. The repository contains `LICENSE`, `NOTICE`, README attribution, and the immutable source commit.
+Substantially adapted files retain Apache-2.0 notices and clearly state they were modified.
 
-The new GDScript client/process/GdUnit integration is native code for this repository rather than a mechanical translation of Python modules.
+The repo keeps:
 
-## 16. Testing strategy
+- Apache-2.0 `LICENSE`;
+- `NOTICE` crediting `godot-e2e` and the pinned source commit;
+- README attribution.
 
-### 16.1 Unit tests
+The GDScript client/process/GdUnit adapter is new native code rather than a mechanical Python translation.
+
+## 17. Testing strategy
+
+### 17.1 Unit tests
 
 Use GdUnit4 for:
 
-- framing and partial reads, including 16 MiB limits;
-- upstream serializer-tag round trips;
+- four-byte BE framing and partial reads;
+- 16 MiB rejection before allocation;
+- upstream serializer round-trips;
 - strict E2E config parsing;
-- retained command-handler behavior;
-- client request IDs, one-in-flight rejection, partial responses, log collection, timeouts, and disconnects with an in-tree fake server;
-- wait timeout + 1 second client-margin behavior;
-- launch option/argv construction including `blocking=false` launch intent;
-- failure formatting without invented error codes;
-- suite parenting/cleanup behavior;
+- representative wrapped command-handler behavior and exact upstream response shapes;
+- client request IDs, partial TCP reads, timeout, disconnect, log deltas, one-in-flight enforcement, and `is_session_open()`;
+- launch argv construction;
+- failure-message formatting;
 - artifact helper behavior with fakes.
 
-### 16.2 Integration tests
+Do not write exhaustive characterization tests for inherited server commands the MVP does not wrap.
 
-Use a minimal real child project to verify:
+### 17.2 Integration tests
 
-1. launch + token handshake;
-2. process/client Nodes receive processing because they are parented under the suite;
-3. node discovery/property read;
-4. action input + physics-frame waiting;
-5. button click;
-6. scene reload/change;
-7. wait timeout returns the server result before the client margin expires;
-8. screenshot capture;
-9. graceful quit and `OS.is_process_running(pid) == false`;
-10. forced cleanup after an unhealthy child;
-11. artifact capture after a raw known-bad command;
-12. no surviving child PID or stale port file.
+All child-launching tests live after `E2EProcess` exists. They launch the repository's own `project.godot` with the fixture scene.
 
-Tests assert observable behavior rather than reimplementing upstream internals.
+Verify:
 
-## 17. CI
+1. `listen(0, "127.0.0.1")` produces a nonzero actual port and writes it to the temp port path;
+2. valid token hello succeeds;
+3. wrong-token and non-hello-first connections are rejected;
+4. invalid startup config never listens and the parent kills the timed-out child;
+5. an authenticated peer disconnect causes child self-exit after the orphan grace;
+6. real node/property access;
+7. action input and button click;
+8. server-wait timeout arrives before the client margin expires;
+9. graceful quit/reap;
+10. forced cleanup of an unhealthy child;
+11. no child remains after `after_test()`;
+12. automatic artifacts are created when the GdUnit failure flag is set;
+13. post-death stdout/stderr drain terminates on both Linux and Windows.
 
-MVP CI runs one pinned Godot/GdUnit4 combination per OS:
+## 18. CI and bootstrap
+
+Use one pinned bootstrap script:
+
+```text
+scripts/bootstrap_gdunit4.sh
+```
+
+GitHub Actions invokes it with `shell: bash` on Linux and Windows; GitHub's Windows hosted runners provide Git for Windows Bash. Keep the GdUnit version pin in one place.
+
+The script may branch only for archive extraction (`unzip` on Unix, PowerShell `Expand-Archive` under Git-for-Windows Bash) while sharing download/version logic.
+
+CI:
 
 ```text
 Linux
+├── install pinned Godot
 ├── bootstrap GdUnit4
-├── unit tests
-└── integration E2E tests under Xvfb
+├── Xvfb
+└── full unit + child-process integration suite
 
 Windows
-├── bootstrap GdUnit4
-├── unit tests
-└── integration E2E tests
+├── install same Godot version family
+├── bootstrap GdUnit4 using the same shell script
+└── full unit + child-process integration suite
 ```
 
 No macOS or version matrix in the MVP.
 
-## 18. Release packaging
+## 19. Release packaging
 
-Release archive:
+Package only:
 
 ```text
 addons/gdunit_e2e/**
@@ -589,40 +656,53 @@ LICENSE
 NOTICE
 ```
 
-Exclude GdUnit4, tests, reports, `test_output`, and development-only scripts.
+Exclude:
 
-## 19. Deferred follow-ups
+- `addons/gdUnit4`;
+- tests/fixtures;
+- reports and `test_output`;
+- CI-only/bootstrap files from the user addon archive.
 
-Only add these after the MVP proves useful:
+## 20. Risks
 
-1. Locator API.
-2. Auto-retrying expectations.
+### Risk 1: Windows process termination and pipe behavior
+
+`OS.kill()`, child exit visibility, and non-blocking pipe EOF/error behavior can differ from Linux. This is why Windows CI is MVP scope, not a later matrix expansion.
+
+Mitigation: Task 5 integration tests must exercise graceful exit, forced kill, `OS.is_process_running(pid) == false`, and bounded post-death drain on both operating systems.
+
+### Risk 2: Parent interruption before cleanup
+
+GdUnit can interrupt a timed-out test function, and the whole runner can also be killed. Normal `close_game()` cannot be the only cleanup line.
+
+Mitigation: automatic `after_test()` cleanup, final `after()` safety cleanup, plus child-side authenticated-peer orphan watchdog.
+
+## 21. Deferred follow-ups
+
+Only add these after the MVP is useful:
+
+1. Playwright-style locators.
+2. Retrying `expect()` assertions.
 3. Engine-error-flood detection.
 4. Dedicated Godot .NET/C# fixture.
 5. macOS CI.
-6. Parallel child sessions.
-7. Richer trace/diagnostic UX.
-8. Editor UX.
+6. Process reuse/pools/parallel sessions.
+7. Richer traces and editor UX.
 
-## 20. Acceptance criteria
+## 22. Acceptance criteria
 
 The MVP is accepted when:
 
-- a GdUnit4 GDScript suite launches a separate real Godot process;
-- `E2EProcess` and `E2EClient` are demonstrably in the test runner SceneTree while active;
-- the child server stays inert without `--gdunit-e2e` and refuses invalid E2E startup configuration;
-- the server listens only on loopback and authenticates the first command with the launch token;
-- actual wire payloads use the pinned upstream response shapes and `_t` serializer tags;
-- the adapted server retains the pinned upstream command-handler surface;
-- the client is non-blocking and permits one in-flight request;
-- server wait commands receive a client deadline later than their server timeout;
-- high-level failures use GdUnit `fail()` and examples explicitly return after a recorded failure when subsequent work depends on success;
-- a real input action changes observable state in the child;
-- a real UI click changes observable state in the child;
-- screenshot/tree/log artifacts can be captured without a nested intentionally failing GdUnit suite;
-- `execute_with_pipe(..., false)` is used and live stdout/stderr are not read on the main thread;
-- shutdown leaves `OS.is_process_running(pid) == false` and no stale port file;
-- Linux and Windows CI pass the same core E2E suite;
-- the release archive contains no Python/pytest runtime and no vendored GdUnit4;
-- Apache-2.0 attribution is preserved for adapted upstream files;
-- the MVP remains one implementation PR.
+- a GdUnit4 GDScript test launches a real separate Godot process from the same project;
+- the selected fixture/game scene runs with the addon autoload active only under `--gdunit-e2e`;
+- port 0 is OS-assigned and the actual loopback port is communicated through the GdUnit temp path;
+- the client authenticates and performs wrapped remote operations without blocking the runner;
+- `_t` values and upstream command/error shapes are preserved;
+- a server-side wait result cannot lose a same-duration client timeout race;
+- ordinary failed tests automatically capture available diagnostics;
+- every test-owned child is closed from `after_test()`;
+- an authenticated orphaned child self-terminates after the grace period if the parent disappears;
+- invalid E2E flags fail closed;
+- oversized inbound lengths cannot cause large untrusted allocation and oversized responses produce a readable upstream-shaped error;
+- Linux and Windows integration tests both verify child termination and bounded pipe drain;
+- release packaging contains the addon plus README/LICENSE/NOTICE and no GdUnit4 copy.
