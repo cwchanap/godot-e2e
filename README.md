@@ -31,7 +31,9 @@ Put a test under the project's normal GdUnit4 test tree and extend
 extends GdUnitE2ETestSuite
 
 func test_main_is_ready() -> void:
-    var game := await launch_game()
+    var options := E2ELaunchOptions.new()
+    options.scene_path = "res://main.tscn"
+    var game := await launch_game(options)
     if game == null or is_failure():
         return
 
@@ -41,10 +43,13 @@ func test_main_is_ready() -> void:
     assert_str(status).is_equal("ready")
 ```
 
-`launch_game()` uses the current project and the default fixture scene
-(`res://tests/fixtures/minimal/main.tscn` in this repository). Pass an
-`E2ELaunchOptions` value when a test needs a different scene or Godot
-arguments. Every test-owned child is tracked by the suite.
+`launch_game()` uses the current project and defaults to the fixture scene
+(`res://tests/fixtures/minimal/main.tscn` in this repository). That fixture is
+not included in the release archive, so installed users must set
+`E2ELaunchOptions.scene_path` to a scene owned by their project, such as the
+`res://main.tscn` placeholder in the example. Pass an `E2ELaunchOptions` value
+when a test needs a different scene or Godot arguments. Every test-owned child
+is tracked by the suite.
 
 The `if is_failure(): return` guard matters after `launch_game()` and after a
 wrapped remote call. A wrapped API call maps a transport/server error to the
