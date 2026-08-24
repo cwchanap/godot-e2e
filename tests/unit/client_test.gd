@@ -73,6 +73,24 @@ func test_request_ids_are_monotonic_and_command_success_shape_is_preserved() -> 
 	})
 
 
+func test_non_hello_success_and_error_resolve_waiters() -> void:
+	var client = _new_client()
+	if client == null:
+		return
+	_server.queue_response({"id": 1, "ok": true})
+	_server.queue_response({"id": 2, "ok": true, "result": "done"})
+	_server.queue_response({"id": 3, "error": "rejected"})
+	assert_bool((await client.connect_to_server(_server.get_port(), "token")).ok).is_true()
+
+	var success = await client.send_command("success", {}, 0.2)
+	var failure = await client.send_command("failure", {}, 0.2)
+
+	assert_bool(success.ok).is_true()
+	assert_str(success.value["result"]).is_equal("done")
+	assert_bool(failure.ok).is_false()
+	assert_str(failure.message).is_equal("rejected")
+
+
 func test_result_payload_deserializes_shared_typed_variant_tags() -> void:
 	var client = _new_client()
 	if client == null:
@@ -145,7 +163,7 @@ func test_error_and_message_response_is_rendered_readably() -> void:
 	assert_str(result.message).is_equal("invalid_argument: bad value")
 
 
-func test_timeout_fails_the_pending_command_and_releases_it() -> void:
+func test_timeout_closes_session_before_a_later_request() -> void:
 	var client = _new_client()
 	if client == null:
 		return
@@ -156,9 +174,12 @@ func test_timeout_fails_the_pending_command_and_releases_it() -> void:
 
 	assert_bool(timed_out.ok).is_false()
 	assert_str(timed_out.message).contains("timed out")
-	_server.queue_response({"id": 3, "ok": true})
-	var next_result = await client.send_command("next", {}, 0.5)
-	assert_bool(next_result.ok).is_true()
+	assert_bool(client.is_session_open()).is_false()
+	_server.queue_response({"id": 2, "ok": true})
+	var next_result = await client.send_command("next", {}, 0.2)
+	assert_bool(next_result.ok).is_false()
+	assert_str(next_result.message).contains("not open")
+	assert_array(_server.received_messages).has_size(2)
 
 
 func test_disconnect_fails_the_pending_command() -> void:
@@ -195,6 +216,31 @@ func test_oversized_response_declaration_fails_before_body_is_needed() -> void:
 	assert_bool(result.ok).is_false()
 	assert_str(result.message).contains("frame")
 	assert_bool(client.is_session_open()).is_false()
+
+
+func test_oversized_response_header_with_body_bytes_caps_read_before_body_allocation() -> void:
+	var client = _new_client()
+	if client == null:
+		return
+	var peer := _BufferedPeer.new()
+	client._peer = peer
+	var declared_size := Protocol.MAX_FRAME_BYTES + 1
+	var incoming := PackedByteArray()
+	incoming.resize(4 + 32)
+	incoming[0] = (declared_size >> 24) & 0xff
+	incoming[1] = (declared_size >> 16) & 0xff
+	incoming[2] = (declared_size >> 8) & 0xff
+	incoming[3] = declared_size & 0xff
+	peer.incoming = incoming
+
+	client._read_available_bytes()
+
+	assert_int(client._recv_buffer.size()).is_equal(4)
+	assert_that(peer.read_sizes).is_equal([4])
+	assert_int(peer.incoming.size()).is_equal(32)
+
+	client._extract_complete_frames()
+	assert_bool(peer.disconnected).is_true()
 #endregion
 
 #region logs and concurrency
@@ -246,10 +292,21 @@ func test_second_command_is_rejected_while_one_is_in_flight() -> void:
 	_server.queue_response({"id": 2, "ok": true})
 	var first = await runner.finished
 	assert_bool(first.ok).is_true()
+
+
+func test_send_command_requires_scene_tree() -> void:
+	var client = _new_client(false)
+	if client == null:
+		return
+
+	var result = await client.send_command("orphan", {}, 0.2)
+
+	assert_bool(result.ok).is_false()
+	assert_str(result.message).contains("SceneTree")
 #endregion
 
 
-func _new_client():
+func _new_client(add_to_tree: bool = true):
 	var client_path := "res://addons/gdunit_e2e/client/e2e_client.gd"
 	if not ResourceLoader.exists(client_path):
 		fail("E2EClient implementation is missing")
@@ -259,7 +316,8 @@ func _new_client():
 		fail("E2EClient implementation could not be loaded")
 		return null
 	_client = script.new()
-	add_child(_client)
+	if add_to_tree:
+		add_child(_client)
 	return _client
 
 
@@ -275,3 +333,24 @@ class _CommandRunner extends Node:
 	func _ready() -> void:
 		var result = await client.send_command(action, {}, 0.5)
 		finished.emit(result)
+
+
+class _BufferedPeer extends RefCounted:
+	var incoming := PackedByteArray()
+	var read_sizes: Array[int] = []
+	var disconnected := false
+
+
+	func get_available_bytes() -> int:
+		return incoming.size()
+
+
+	func get_data(size: int) -> Array:
+		read_sizes.append(size)
+		var data := incoming.slice(0, size)
+		incoming = incoming.slice(size)
+		return [OK, data]
+
+
+	func disconnect_from_host() -> void:
+		disconnected = true

@@ -8,7 +8,7 @@ const E2EResult = preload("e2e_result.gd")
 
 signal _pending_completed(result)
 
-var _peer: StreamPeerTCP
+var _peer = null
 var _recv_buffer := PackedByteArray()
 var _next_id: int = 1
 var _session_open := false
@@ -37,7 +37,7 @@ func connect_to_server(
 	_peer = StreamPeerTCP.new()
 	_recv_buffer = PackedByteArray()
 	_session_open = false
-	var connect_error := _peer.connect_to_host("127.0.0.1", port)
+	var connect_error: int = _peer.connect_to_host("127.0.0.1", port)
 	if connect_error != OK:
 		_drop_peer()
 		return _failure("Failed to connect to 127.0.0.1:%d (error %d)" % [port, connect_error])
@@ -65,6 +65,8 @@ func send_command(
 ) -> E2EResult:
 	if _pending_id != 0:
 		return _failure("A command is already in flight")
+	if not is_inside_tree():
+		return _failure("E2EClient must be inside the SceneTree before sending commands")
 	if not is_session_open():
 		return _failure("E2E session is not open")
 
@@ -105,7 +107,7 @@ func _process(_delta: float) -> void:
 	if _peer == null:
 		return
 	_peer.poll()
-	var status := _peer.get_status()
+	var status: int = _peer.get_status()
 	if status == StreamPeerTCP.STATUS_CONNECTED:
 		_send_pending_packet_if_ready()
 		_read_available_bytes()
@@ -139,7 +141,7 @@ func _begin_pending(id: int, action: String, timeout_seconds: float, frame: Pack
 func _send_pending_packet_if_ready() -> void:
 	if _peer == null or _pending_id == 0 or _pending_sent:
 		return
-	var error := _peer.put_data(_pending_packet)
+	var error: int = _peer.put_data(_pending_packet)
 	if error != OK:
 		_drop_peer()
 		_finish_pending(_failure("Failed to send '%s' (error %d)" % [_pending_action, error]))
@@ -149,19 +151,39 @@ func _send_pending_packet_if_ready() -> void:
 
 func _read_available_bytes() -> void:
 	while _peer != null:
-		var available := _peer.get_available_bytes()
-		if available <= 0:
+		if _recv_buffer.size() < 4:
+			if not _read_peer_bytes(4 - _recv_buffer.size()):
+				return
+			continue
+
+		var declared_size := E2EFraming._decode_u32_be(_recv_buffer, 0)
+		if declared_size > E2EProtocol.MAX_FRAME_BYTES:
 			return
-		var result: Array = _peer.get_data(available)
-		if result[0] != OK:
-			if _pending_id != 0:
-				var read_error = _failure("Failed to read response (error %d)" % result[0])
-				_drop_peer()
-				_finish_pending(read_error)
-			else:
-				_drop_peer()
+		var frame_size := 4 + declared_size
+		if _recv_buffer.size() >= frame_size:
 			return
-		_recv_buffer.append_array(result[1])
+		if not _read_peer_bytes(frame_size - _recv_buffer.size()):
+			return
+
+
+func _read_peer_bytes(max_bytes: int) -> bool:
+	if _peer == null or max_bytes <= 0:
+		return false
+	var available: int = _peer.get_available_bytes()
+	if available <= 0:
+		return false
+	var read_size: int = min(available, max_bytes)
+	var result: Array = _peer.get_data(read_size)
+	if result[0] != OK:
+		if _pending_id != 0:
+			var read_error = _failure("Failed to read response (error %d)" % result[0])
+			_drop_peer()
+			_finish_pending(read_error)
+		else:
+			_drop_peer()
+		return false
+	_recv_buffer.append_array(result[1])
+	return true
 
 
 func _extract_complete_frames() -> void:
@@ -263,9 +285,7 @@ func _expire_pending_request_if_needed() -> void:
 	var result = _failure(
 		"Command '%s' timed out after %d ms" % [_pending_action, _pending_timeout_ms]
 	)
-	var is_hello := _pending_action == "hello"
-	if is_hello:
-		_drop_peer()
+	_drop_peer()
 	_finish_pending(result)
 
 
@@ -281,6 +301,7 @@ func _finish_pending(result) -> void:
 	_pending_sent = false
 	if action == "hello":
 		_session_open = result.ok
+	# Every pending operation, not only the hello handshake, awaits this signal.
 	_pending_completed.emit(result)
 
 
