@@ -40,19 +40,25 @@ func capture_failure_artifacts(game: GdUnitE2EGame) -> void:
 		return
 
 	var paths := _artifact_paths()
-	@warning_ignore("return_value_discarded")
-	DirAccess.make_dir_recursive_absolute(paths["directory"])
+	_ensure_artifact_directory(paths)
 
 	# These captures are intentionally independent. A failed remote request or
 	# unavailable log buffer must not prevent the other reachable artifacts.
-	if game.has_method("screenshot"):
-		await game.screenshot(paths["screenshot"])
+	if game.has_method("send_command"):
+		# Use the raw command seam so an unavailable diagnostic RPC never calls
+		# GdUnit's fail() mapping while the primary test failure is being handled.
+		await game.send_command("screenshot", {"save_path": paths["screenshot"]})
 
 	var scene_tree: Variant = {}
-	if game.has_method("get_tree"):
-		var captured_tree = await game.get_tree()
-		if captured_tree is Dictionary:
-			scene_tree = captured_tree
+	if game.has_method("send_command"):
+		var tree_result: E2EResult = await game.send_command(
+			"get_tree",
+			{"path": "/root", "depth": 4},
+		)
+		if tree_result.ok and tree_result.value is Dictionary:
+			var captured_tree = tree_result.value.get("tree", {})
+			if captured_tree is Dictionary:
+				scene_tree = captured_tree
 	_write_json_best_effort(paths["scene_tree"], scene_tree)
 
 	var engine_logs: Variant = []
@@ -109,6 +115,8 @@ func _close_and_finalize(record: Dictionary) -> void:
 
 	var process = record.get("process", null)
 	if is_instance_valid(process):
+		var paths := _artifact_paths()
+		_ensure_artifact_directory(paths)
 		if process.has_method("close"):
 			await process.close()
 			# E2EProcess.close() is bounded and idempotent. A retry keeps a
@@ -124,7 +132,6 @@ func _close_and_finalize(record: Dictionary) -> void:
 						record["cleanup_failure_reported"] = true
 					return
 
-		var paths := _artifact_paths()
 		if process.has_method("get_stdout"):
 			_write_text_best_effort(paths["stdout"], str(process.get_stdout()))
 		if process.has_method("get_stderr"):
@@ -157,6 +164,11 @@ func _artifact_paths() -> Dictionary:
 		"stdout": directory + "/stdout.log",
 		"stderr": directory + "/stderr.log",
 	}
+
+
+func _ensure_artifact_directory(paths: Dictionary) -> void:
+	@warning_ignore("return_value_discarded")
+	DirAccess.make_dir_recursive_absolute(paths["directory"])
 
 
 func _current_test_name() -> String:

@@ -54,16 +54,27 @@ class _FakeGame extends GdUnitE2EGame:
 	var screenshot_path := ""
 	var timeline: Array = []
 
-	func screenshot(_path := "") -> String:
-		events.append("screenshot")
-		timeline.append("screenshot")
-		screenshot_path = _path
-		return _path
+	func send_command(action: String, parameters := {}, _timeout := 2.0) -> E2EResult:
+		match action:
+			"screenshot":
+				events.append("screenshot")
+				timeline.append("screenshot")
+				screenshot_path = str(parameters.get("save_path", ""))
+				return E2EResult.new(true)
+			"get_tree":
+				events.append("tree")
+				timeline.append("tree")
+				return E2EResult.new(true, {"tree": {"name": "fake"}})
+			_:
+				return E2EResult.new(false, null, "unsupported fake command")
 
-	func get_tree(_path := "/root", _depth := 4) -> Dictionary:
-		events.append("tree")
-		timeline.append("tree")
-		return {"name": "fake"}
+
+class _FailedArtifactGame extends GdUnitE2EGame:
+	var actions: Array = []
+
+	func send_command(action: String, _parameters := {}, _timeout := 2.0) -> E2EResult:
+		actions.append(action)
+		return E2EResult.new(false, null, "artifact RPC unavailable")
 
 
 func test_gdunit_e2e_suite_script_is_available() -> void:
@@ -204,6 +215,50 @@ func test_after_test_reaps_tracked_process_without_failure_capture() -> void:
 	suite.queue_free()
 
 
+func test_failed_artifact_rpcs_do_not_add_a_gdunit_failure() -> void:
+	var suite := _RecordingSuite.new()
+	add_child(suite)
+	suite.set_name("GdUnitSuiteTest")
+	suite.set_active_test_case("test_failed_artifact_rpcs_do_not_add_a_gdunit_failure")
+	var process := _FakeProcess.new()
+	var game := _FailedArtifactGame.new()
+	suite.add_child(process)
+	var record := {"game": game, "process": process}
+	suite.set("_tracked_games", [record])
+
+	await suite.call("capture_failure_artifacts", game)
+
+	assert_array(suite.failures).is_empty()
+	assert_array(game.actions).contains_exactly("screenshot", "get_tree")
+	assert_bool(FileAccess.file_exists(_artifact_path(
+		suite, "test_failed_artifact_rpcs_do_not_add_a_gdunit_failure", "scene_tree.json"
+	))).is_true()
+
+	await suite.call("_close_and_finalize", record)
+	suite.queue_free()
+
+
+func test_launch_failure_cleanup_writes_streams_without_a_game() -> void:
+	var suite := _RecordingSuite.new()
+	add_child(suite)
+	suite.set_name("GdUnitSuiteTest")
+	suite.set_active_test_case("test_launch_failure_cleanup_writes_streams_without_a_game")
+	var process := _FakeProcess.new()
+	suite.add_child(process)
+	var record := {"game": null, "process": process}
+	suite.set("_tracked_games", [record])
+
+	await suite.call("_close_and_finalize", record)
+
+	assert_bool(FileAccess.file_exists(_artifact_path(
+		suite, "test_launch_failure_cleanup_writes_streams_without_a_game", "stdout.log"
+	))).is_true()
+	assert_bool(FileAccess.file_exists(_artifact_path(
+		suite, "test_launch_failure_cleanup_writes_streams_without_a_game", "stderr.log"
+	))).is_true()
+	suite.queue_free()
+
+
 func test_failed_reap_keeps_process_tracked_for_safety_retry() -> void:
 	var suite := _RecordingSuite.new()
 	add_child(suite)
@@ -222,6 +277,12 @@ func test_failed_reap_keeps_process_tracked_for_safety_retry() -> void:
 	suite.remove_child(process)
 	process.queue_free()
 	suite.queue_free()
+
+
+func _artifact_path(suite: Node, test_name: String, file_name: String) -> String:
+	return ProjectSettings.globalize_path(
+		"res://test_output/%s/%s/%s" % [suite.get_name(), test_name, file_name]
+	)
 
 
 func test_before_test_reaps_unexpected_previous_processes() -> void:
