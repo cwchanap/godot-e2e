@@ -1,0 +1,8 @@
+godot-e2e
+
+This project includes an addon adapted from RandallLiuXin/godot-e2e,
+licensed under the Apache License, Version 2.0.
+
+Upstream repository: https://github.com/RandallLiuXin/godot-e2e
+Copyright holder: Randall LiuXin
+Pinned source commit: ae6219f6e758a0f29bd243c8f963417fe4d63c36

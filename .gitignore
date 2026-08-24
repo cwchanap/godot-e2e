@@ -1,0 +1,6 @@
+.godot/
+addons/gdUnit4/
+reports/
+test_output/
+dist/
+*.tmp
