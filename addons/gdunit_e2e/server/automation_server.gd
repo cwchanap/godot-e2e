@@ -82,6 +82,10 @@ var _physics_frame_counter: int = 0
 var _last_drain_seq: int = -1
 
 
+func set_log_capture(log_capture) -> void:
+	_log_capture = log_capture
+
+
 func _ready() -> void:
 	if not Config.is_enabled():
 		set_process(false)
@@ -95,9 +99,10 @@ func _ready() -> void:
 
 	# Register the engine log capture before anything else can emit. This
 	# way the listen-error path below shows up in the capture buffer too.
-	_log_capture = LogCaptureScript.new()
-	_log_capture.set_verbosity_str(Config.get_log_verbosity())
-	OS.add_logger(_log_capture)
+	if _log_capture == null:
+		_log_capture = LogCaptureScript.new()
+		_log_capture.set_verbosity_str(Config.get_log_verbosity())
+		OS.add_logger(_log_capture)
 
 	_handler = CommandHandlerScript.new(self)
 
