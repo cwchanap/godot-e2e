@@ -3,6 +3,7 @@ extends Node
 
 const E2EClientScript = preload("e2e_client.gd")
 const E2EResultScript = preload("e2e_result.gd")
+const BootstrapScene = preload("../runtime/bootstrap.tscn")
 
 const POLL_INTERVAL_MILLIS := 25
 const SHUTDOWN_GRACE_MILLIS := 1000
@@ -36,12 +37,13 @@ static func build_arguments(options: E2ELaunchOptions, port_file: String, token:
 		"--path",
 		options.project_path,
 		"--scene",
-		options.scene_path,
+		BootstrapScene.resource_path,
 	])
 	for extra_arg in options.extra_godot_args:
 		args.append(String(extra_arg))
 	args.append("--")
 	args.append("--gdunit-e2e")
+	args.append("--gdunit-e2e-target-scene=" + options.scene_path)
 	args.append("--gdunit-e2e-port=" + str(options.server_port))
 	args.append("--gdunit-e2e-port-file=" + port_file)
 	args.append("--gdunit-e2e-token=" + token)
