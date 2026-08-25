@@ -68,3 +68,22 @@ func test_malformed_gdunit_e2e_flag_is_invalid_without_falling_back() -> void:
 
 	assert_bool(Config.is_valid()).is_false()
 	assert_str(Config.get_validation_error()).contains("--gdunit-e2e-port")
+
+
+func test_parses_target_scene() -> void:
+	GdUnitE2EConfig._reset_for_testing([
+		"--gdunit-e2e",
+		"--gdunit-e2e-target-scene=res://main.tscn",
+	])
+
+	assert_str(GdUnitE2EConfig.get_target_scene()).is_equal("res://main.tscn")
+	assert_bool(GdUnitE2EConfig.is_valid()).is_true()
+
+
+func test_rejects_empty_explicit_target_scene() -> void:
+	GdUnitE2EConfig._reset_for_testing([
+		"--gdunit-e2e",
+		"--gdunit-e2e-target-scene=",
+	])
+
+	assert_bool(GdUnitE2EConfig.is_valid()).is_false()

@@ -25,6 +25,7 @@ static var _enabled: bool = false
 static var _port: int = DEFAULT_PORT
 static var _token: String = ""
 static var _port_file: String = ""
+static var _target_scene := ""
 static var _log_verbosity: String = DEFAULT_LOG_VERBOSITY
 static var _valid: bool = true
 static var _validation_error: String = ""
@@ -62,6 +63,10 @@ static func _ensure_parsed() -> void:
 			else:
 				_mark_invalid("invalid log verbosity '%s' (expected error, warning, or info)" % value)
 				_log_verbosity = value
+		elif arg.begins_with("--gdunit-e2e-target-scene="):
+			_target_scene = arg.substr("--gdunit-e2e-target-scene=".length())
+			if _target_scene.is_empty():
+				_mark_invalid("target scene must not be empty")
 		elif arg.begins_with("--gdunit-e2e"):
 			_mark_invalid("unknown or malformed flag '%s'" % arg)
 
@@ -107,6 +112,11 @@ static func get_port_file() -> String:
 	return _port_file
 
 
+static func get_target_scene() -> String:
+	_ensure_parsed()
+	return _target_scene
+
+
 static func is_logging() -> bool:
 	_ensure_parsed()
 	return _enabled and _log_verbosity == "info"
@@ -126,6 +136,7 @@ static func _reset_for_testing(args: Array = []) -> void:
 	_port = DEFAULT_PORT
 	_token = ""
 	_port_file = ""
+	_target_scene = ""
 	_log_verbosity = DEFAULT_LOG_VERBOSITY
 	_valid = true
 	_validation_error = ""
