@@ -9,18 +9,18 @@ the test runner, assertion library, lifecycle, CLI, and reporter; this addon
 only supplies the child-process client, automation server, and GdUnit4 suite
 base class.
 
-## Install and enable
+## Install
 
-Install GdUnit4 in the project using its normal installation instructions,
-then copy `addons/gdunit_e2e` from the release archive into the project. In
-Godot, open Project Settings > Plugins and enable **GdUnit E2E**. Enabling the
-plugin registers the `GdUnitE2EAutomationServer` autoload. The addon archive
-does not include GdUnit4, the test fixtures, or the CI/bootstrap files.
+1. Install GdUnit4.
+2. Install/copy addons/gdunit_e2e.
+3. Write an E2E test.
 
-The autoload is safe during an ordinary game run: it only starts its server
-when the child receives the `--gdunit-e2e` launch arguments from the test
-suite. A project that already owns the autoload can keep it in
-`project.godot`; do not add a second copy under a fixture project.
+There is no editor plugin to enable and godot-e2e does not add an autoload
+to your project. The automation server exists only inside child processes
+launched by GdUnitE2ETestSuite.
+
+The addon archive does not include GdUnit4, the test fixtures, or the
+CI/bootstrap files.
 
 ## Minimal test
 
@@ -129,9 +129,9 @@ state, as described above.
 
 The child is launched from the same project tree as the test runner. The
 client rejects a different project path, and the child uses the repository's
-addon/autoload rather than a copied fixture addon. The E2E autoload is inert
-unless the child has the authenticated E2E command-line arguments, so normal
-project autoloads remain ordinary project behavior.
+addon rather than a copied fixture addon. The automation server is created
+only in the child process, so normal project runs remain ordinary project
+behavior.
 
 For local development in this repository, install the pinned GdUnit4 copy and
 run the normal suite by directory. Keep the intentional failure fixture out of
@@ -161,11 +161,11 @@ verification does not substitute for it.
 
 ## Packaging and attribution
 
-Create the 0.1.0 archive with:
+Create the 0.1.1 archive with:
 
 ```bash
 ./scripts/package_release.sh
-unzip -l dist/godot-e2e-0.1.0.zip
+unzip -l dist/godot-e2e-0.1.1.zip
 ```
 
 The archive contains only `addons/gdunit_e2e/**`, `README.md`, `LICENSE`, and
