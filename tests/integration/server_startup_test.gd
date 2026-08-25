@@ -20,8 +20,26 @@ func test_real_server_writes_a_nonzero_ephemeral_port_and_handles_node_access() 
 	assert_bool(FileAccess.file_exists(_process.get_port_file())).is_true()
 	assert_int(_process.get_port()).is_greater(0)
 
-	var node_result = await _process.get_client().send_command("node_exists", {"path": "/root/Main"})
-	var property_result = await _process.get_client().send_command("get_property", {
+	var client = _process.get_client()
+	var scene_result = await client.send_command("get_scene")
+	assert_bool(scene_result.ok).is_true()
+	assert_str(scene_result.value["scene"]).is_equal(
+		"res://tests/fixtures/minimal/main.tscn"
+	)
+
+	var root_result = await client.send_command("node_exists", {"path": "/root/Main"})
+	assert_bool(root_result.ok).is_true()
+	assert_bool(root_result.value["exists"]).is_true()
+
+	var bootstrap_result = await client.send_command(
+		"node_exists",
+		{"path": "/root/GdUnitE2EBootstrapRunner"},
+	)
+	assert_bool(bootstrap_result.ok).is_true()
+	assert_bool(bootstrap_result.value["exists"]).is_false()
+
+	var node_result = await client.send_command("node_exists", {"path": "/root/Main"})
+	var property_result = await client.send_command("get_property", {
 		"path": "/root/Main/Status",
 		"property": "text",
 	})
@@ -30,6 +48,46 @@ func test_real_server_writes_a_nonzero_ephemeral_port_and_handles_node_access() 
 	assert_bool(node_result.value["exists"]).is_true()
 	assert_bool(property_result.ok).is_true()
 	assert_str(property_result.value["result"]).is_equal("ready")
+
+	var changed = await client.send_command(
+		"change_scene",
+		{"scene_path": "res://tests/fixtures/minimal/main.tscn"},
+		6.0,
+	)
+	assert_bool(changed.ok).is_true()
+
+	var after_change = await client.send_command("node_exists", {"path": "/root/Main"})
+	assert_bool(after_change.ok).is_true()
+	assert_bool(after_change.value["exists"]).is_true()
+
+
+func test_startup_error_logs_cross_bootstrap_boundary() -> void:
+	var result = await _launch("res://tests/fixtures/startup_error/main.tscn")
+	assert_bool(result.ok).is_true()
+
+	var found_startup_error := false
+	for entry in _process.get_client().get_collected_logs():
+		if String(entry.get("message", "")).contains("gdunit-e2e startup error fixture"):
+			found_startup_error = true
+			break
+	assert_bool(found_startup_error).is_true()
+
+
+func test_invalid_target_scene_exits_before_port_file_consumption() -> void:
+	var options = _options()
+	options.scene_path = "res://does_not_exist.tscn"
+	_process = E2EProcessScript.new(self)
+	add_child(_process)
+
+	var result = await _process.launch(options)
+
+	assert_bool(result.ok).is_false()
+	assert_bool(_process.is_running()).is_false()
+	assert_bool(OS.is_process_running(_process.get_pid())).is_false()
+	assert_int(_process.get_port()).is_equal(-1)
+	assert_bool(
+		_process.get_port_file().is_empty() or not FileAccess.file_exists(_process.get_port_file())
+	).is_true()
 
 
 func test_wrong_token_is_rejected_by_the_real_server() -> void:
@@ -113,10 +171,13 @@ func test_reauthentication_within_grace_keeps_child_alive() -> void:
 	assert_bool(_process.is_running()).is_true()
 
 
-func _launch():
+func _launch(scene_path := ""):
 	_process = E2EProcessScript.new(self)
 	add_child(_process)
-	return await _process.launch(_options())
+	var options = _options()
+	if not scene_path.is_empty():
+		options.scene_path = scene_path
+	return await _process.launch(options)
 
 
 func _options():

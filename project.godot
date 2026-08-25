@@ -7,10 +7,6 @@ config_version=5
 
 config/name="godot-e2e"
 
-[autoload]
-
-GdUnitE2EAutomationServer="*res://addons/gdunit_e2e/server/automation_server.gd"
-
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/gdUnit4/plugin.cfg")
