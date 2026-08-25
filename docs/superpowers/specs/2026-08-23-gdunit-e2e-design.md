@@ -10,7 +10,7 @@
 
 `godot-e2e` is a standalone Godot addon for writing true out-of-process end-to-end tests in GDScript while using GdUnit4 as the only test runner, assertion library, lifecycle framework, CLI, and reporter.
 
-A GdUnit4 test launches the same Godot project as a separate child process, optionally selecting a fixture/game scene with `--scene`. A small automation-server autoload runs inside the child only when `--gdunit-e2e` is present. The parent controls the child over a localhost-only, token-paired TCP connection using a non-blocking GDScript client.
+A GdUnit4 test launches the same Godot project as a separate child process. `E2EProcess` launches a private bootstrap scene that activates `GdUnitE2EAutomationServer` inside the child only when `--gdunit-e2e` is present, then changes to the requested fixture/game scene from `--gdunit-e2e-target-scene`. The parent controls the child over a localhost-only, token-paired TCP connection using a non-blocking GDScript client.
 
 The server implementation is adapted from `RandallLiuXin/godot-e2e` at immutable commit `ae6219f6e758a0f29bd243c8f963417fe4d63c36`. That pinned GDScript server is the v1 wire and behavior baseline. Python/pytest code is reference material only and is not a runtime dependency.
 
@@ -90,16 +90,13 @@ GdUnit4 test process
                     │ 127.0.0.1 TCP
                     │ [u32 BE length][UTF-8 JSON]
                     ▼
-Child Godot process (same project)
-├── selected game/fixture scene
-└── GdUnitE2EAutomationServer autoload
-    ├── token-first handshake
-    ├── retained upstream command handler
-    ├── deferred waits
-    ├── engine-log capture
-    ├── orphan watchdog
-    └── screenshot/tree access
+Child Godot process
+├── consumer target scene
+└── GdUnitE2EAutomationServer
+    └── directly attached under SceneTree.root by private bootstrap
 ```
+
+The server stays outside `SceneTree.current_scene`, so normal remote scene changes do not remove it.
 
 ### 6.1 SceneTree ownership is mandatory
 
@@ -128,12 +125,14 @@ Process reuse across multiple test cases is deferred until there is a demonstrat
 ```text
 .
 ├── addons/gdunit_e2e/
-│   ├── plugin.cfg
-│   ├── plugin.gd
 │   ├── protocol/
 │   │   ├── e2e_protocol.gd
 │   │   ├── e2e_framing.gd
 │   │   └── e2e_serializer.gd
+│   ├── runtime/
+│   │   ├── bootstrap.tscn
+│   │   ├── bootstrap.gd
+│   │   └── bootstrap_runner.gd
 │   ├── server/
 │   │   ├── automation_server.gd
 │   │   ├── command_handler.gd
@@ -163,42 +162,64 @@ Process reuse across multiple test cases is deferred until there is a demonstrat
 └── NOTICE
 ```
 
-There is no nested fixture `project.godot`. Integration tests launch the repository's own project and select `res://tests/fixtures/minimal/main.tscn`. This guarantees the child uses the exact addon/autoload under test instead of a copied fixture addon.
+There is no nested fixture `project.godot`. Integration tests launch the repository's own project and select `res://tests/fixtures/minimal/main.tscn`. This guarantees the child uses the exact addon and private bootstrap under test instead of a copied fixture addon.
 
 GdUnit4 is installed separately at `res://addons/gdUnit4` for development/CI and is excluded from release artifacts.
 
+### 7.1 Installation
+
+The supported installation contract is:
+
+```text
+install GdUnit4
+copy/install addons/gdunit_e2e
+write tests
+run tests
+```
+
+No editor plugin enable step.
+No godot-e2e autoload entry.
+No consumer project.godot modification.
+
 ## 8. Activation and launch arguments
 
-The addon registers an autoload named:
-
-```text
-GdUnitE2EAutomationServer
-```
-
-pointing to:
-
-```text
-res://addons/gdunit_e2e/server/automation_server.gd
-```
-
-The autoload is inert unless `OS.get_cmdline_user_args()` includes `--gdunit-e2e`.
+`E2EProcess` launches the private bootstrap `PackedScene` resolved from its installed resource path through a relative preload, rather than relying on a fixed addon directory or a project autoload. The bootstrap activates `GdUnitE2EAutomationServer` only when `OS.get_cmdline_user_args()` includes `--gdunit-e2e`.
 
 Typical child argv:
 
 ```text
 <godot>
   --path <absolute project path>
-  --scene res://tests/fixtures/minimal/main.tscn
+  --scene <installed private bootstrap PackedScene path>
   <other explicit Godot args>
   --
   --gdunit-e2e
+  --gdunit-e2e-target-scene=<E2ELaunchOptions.scene_path>
   --gdunit-e2e-port=0
   --gdunit-e2e-port-file=<GdUnit temp dir>/port_<token>.txt
   --gdunit-e2e-token=<random token>
   --gdunit-e2e-log-verbosity=warning
 ```
 
-No GdUnit CLI arguments are forwarded to the child. The child is still the same project, so normal project autoloads—including any GdUnit4 autoloads configured by the project—load normally and must be inert during ordinary game execution.
+No GdUnit CLI arguments are forwarded to the child. The child is still the same project, so pre-existing project autoloads—including any GdUnit4 autoloads configured by the project—load normally and must be inert during ordinary game execution. `godot-e2e` adds no autoload to the consumer project.
+
+Startup order is:
+
+```text
+bootstrap scene enters tree
+→ defer runner under SceneTree.root
+→ runner validates E2E configuration
+→ runner registers LogCapture
+→ change to consumer target scene
+→ consumer scene initializes, including _ready()
+→ scene_changed fires
+→ runner creates automation server with the existing LogCapture
+→ automation server listens/writes port file
+→ runner frees itself
+→ parent authenticates
+```
+
+The automation server must not accept authentication until the target consumer scene has become current, while log capture must begin before that scene initializes.
 
 ### 8.1 Fail-closed configuration
 
@@ -479,8 +500,9 @@ Launch flow:
 
 ```text
 suite add_child(E2EProcess)
+→ resolve the private bootstrap PackedScene from its installed resource path
 → create GdUnit temp directory and token-based port path
-→ execute_with_pipe(..., blocking=false)
+→ execute_with_pipe(..., blocking=false) with the bootstrap as --scene and the consumer scene as --gdunit-e2e-target-scene
 → await suite.await_millis(...) while polling PID + port file
 → read actual port
 → E2EProcess add_child(E2EClient)
@@ -566,7 +588,6 @@ Adapt, rather than redesign, these pinned upstream files where useful:
 - `addons/godot_e2e/config.gd`
 - `addons/godot_e2e/json_serializer.gd`
 - `addons/godot_e2e/log_capture.gd`
-- `addons/godot_e2e/plugin.gd`
 
 Substantially adapted files retain Apache-2.0 notices and clearly state they were modified.
 
@@ -598,7 +619,7 @@ Do not write exhaustive characterization tests for inherited server commands the
 
 ### 17.2 Integration tests
 
-All child-launching tests live after `E2EProcess` exists. They launch the repository's own `project.godot` with the fixture scene.
+All child-launching tests live after `E2EProcess` exists. They launch the repository's own `project.godot` with the private bootstrap scene and pass the fixture scene as `--gdunit-e2e-target-scene`.
 
 Verify:
 
@@ -694,7 +715,13 @@ Only add these after the MVP is useful:
 The MVP is accepted when:
 
 - a GdUnit4 GDScript test launches a real separate Godot process from the same project;
-- the selected fixture/game scene runs with the addon autoload active only under `--gdunit-e2e`;
+- a clean consumer project with no gdunit-e2e autoload can launch E2E tests;
+- the requested consumer scene becomes SceneTree.current_scene;
+- its root remains directly below /root;
+- startup push_error/push_warning output from the consumer scene reaches the parent log collection;
+- the bootstrap scene and runner are gone after startup;
+- the automation server survives change_scene/reload_scene exactly as the old autoload did;
+- a renamed addon install directory still resolves the private bootstrap through its preloaded resource path.
 - port 0 is OS-assigned and the actual loopback port is communicated through the GdUnit temp path;
 - the client authenticates and performs wrapped remote operations without blocking the runner;
 - `_t` values and upstream command/error shapes are preserved;
