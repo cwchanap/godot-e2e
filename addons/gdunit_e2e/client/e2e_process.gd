@@ -298,9 +298,19 @@ func _drain_pipes() -> void:
 # Non-blocking drain used while the child is alive (during launch polling).
 # Reads only bytes already in the OS pipe buffer so the child never stalls on
 # a full pipe. Unlike _drain_pipe(), this never awaits and never blocks.
+# The accumulated text is kept bounded by MAX_PIPE_BYTES across repeated drains
+# by retaining only the most recent output; both pipes are always read so the
+# OS buffer never fills, even when the diagnostic text has reached its cap.
 func _drain_pipes_live() -> void:
-	_stdout_text += _read_available_pipe(_stdio)
-	_stderr_text += _read_available_pipe(_stderr)
+	_stdout_text = _bounded_pipe_text(_stdout_text, _read_available_pipe(_stdio))
+	_stderr_text = _bounded_pipe_text(_stderr_text, _read_available_pipe(_stderr))
+
+
+func _bounded_pipe_text(existing: String, chunk: String) -> String:
+	var combined := existing + chunk
+	if combined.length() > MAX_PIPE_BYTES:
+		return combined.right(MAX_PIPE_BYTES)
+	return combined
 
 
 func _read_available_pipe(pipe) -> String:
