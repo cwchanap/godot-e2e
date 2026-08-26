@@ -93,8 +93,10 @@ func launch(options: E2ELaunchOptions) -> E2EResult:
 	_client = E2EClientScript.new()
 	add_child(_client)
 
-	# The child pipes remain untouched while it is alive. Reading them here can
-	# block on platform-specific pipe behavior and can deadlock cleanup.
+	# The child pipes are drained non-blocking during launch polling (below) to
+	# keep the OS pipe buffer from filling and blocking the child before it can
+	# write its port file. A synchronous blocking read here can deadlock on
+	# platform-specific pipe behavior, so only available bytes are peeked.
 	_process_info = OS.execute_with_pipe(executable, args, false)
 	if _process_info.is_empty() or not _process_info.has("pid"):
 		await close()
@@ -124,6 +126,11 @@ func launch(options: E2ELaunchOptions) -> E2EResult:
 				if parsed_port > 0 and parsed_port <= 65535:
 					_port = parsed_port
 					break
+		# Drain whatever the child has written so the OS pipe buffer never fills
+		# and stalls the child before it writes its port file. This is critical on
+		# Windows where a non-headless Godot emits enough startup logs (renderer
+		# fallback, audio errors) to fill the small default pipe buffer.
+		_drain_pipes_live()
 		await _suite.await_millis(POLL_INTERVAL_MILLIS)
 
 	if _port <= 0:
@@ -280,12 +287,33 @@ func _record_exit_code() -> void:
 
 
 func _drain_pipes() -> void:
-	_stdout_text = await _drain_pipe(_stdio)
-	_stderr_text = await _drain_pipe(_stderr)
+	_stdout_text += await _drain_pipe(_stdio)
+	_stderr_text += await _drain_pipe(_stderr)
 	_close_pipe(_stdio)
 	_close_pipe(_stderr)
 	_stdio = null
 	_stderr = null
+
+
+# Non-blocking drain used while the child is alive (during launch polling).
+# Reads only bytes already in the OS pipe buffer so the child never stalls on
+# a full pipe. Unlike _drain_pipe(), this never awaits and never blocks.
+func _drain_pipes_live() -> void:
+	_stdout_text += _read_available_pipe(_stdio)
+	_stderr_text += _read_available_pipe(_stderr)
+
+
+func _read_available_pipe(pipe) -> String:
+	if pipe == null or not pipe.is_open():
+		return ""
+	var bytes := PackedByteArray()
+	while bytes.size() < MAX_PIPE_BYTES:
+		var available := int(pipe.get_length())
+		if available <= 0:
+			break
+		var read_size := min(available, MAX_PIPE_BYTES - bytes.size())
+		bytes.append_array(pipe.get_buffer(read_size))
+	return bytes.get_string_from_utf8()
 
 
 func _drain_pipe(pipe) -> String:
