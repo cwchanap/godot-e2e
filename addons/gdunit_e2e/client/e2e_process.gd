@@ -8,6 +8,8 @@ const BootstrapScene = preload("../runtime/bootstrap.tscn")
 const POLL_INTERVAL_MILLIS := 25
 const SHUTDOWN_GRACE_MILLIS := 1000
 const PIPE_DRAIN_MILLIS := 500
+const LIVE_DRAIN_BUDGET_MILLIS := 50
+const LIVE_DRAIN_IDLE_SPINS := 64
 const MAX_PIPE_BYTES := 4 * 1024 * 1024
 
 var _suite: GdUnitTestSuite
@@ -182,8 +184,10 @@ func _process(_delta: float) -> void:
 	# lifetime, not just during launch polling. At log_verbosity = "info"
 	# the automation server print()s every request/response, so a long
 	# otherwise-quiet test can still fill the OS pipe buffer mid-run and
-	# stall the child on its next write. Skipped during close() so this
-	# non-blocking peek can't race the final blocking drain.
+	# stall the child on its next write. Live drain loops across OS-buffer
+	# empty gaps within one tick because parent FPS can be far too low to
+	# empty a burst at one buffer per frame (Windows CI + ANGLE). Skipped
+	# during close() so this non-blocking peek can't race the final drain.
 	if _close_started or _dead_confirmed or _pid <= 0:
 		return
 	_drain_pipes_live()
@@ -307,15 +311,38 @@ func _drain_pipes() -> void:
 	_stderr = null
 
 
-# Non-blocking drain used while the child is alive (during launch polling).
-# Reads only bytes already in the OS pipe buffer so the child never stalls on
-# a full pipe. Unlike _drain_pipe(), this never awaits and never blocks.
-# The accumulated text is kept bounded by MAX_PIPE_BYTES across repeated drains
+# Non-blocking drain used while the child is alive. Reads bytes already in the
+# OS pipe buffer, then keeps peeking across brief empty gaps so a producer that
+# unblocks after our read can refill the buffer in the same tick. Throughput is
+# otherwise capped at parent_fps * OS_pipe_capacity, which stalls the child on
+# slow Windows frames. Unlike _drain_pipe(), this never awaits Godot frames.
+# Idle spins are used instead of OS.delay_usec because Windows timer granularity
+# can turn a 250us yield into a 15ms sleep and exhaust the budget. The
+# accumulated text is kept bounded by MAX_PIPE_BYTES across repeated drains
 # by retaining only the most recent output; both pipes are always read so the
 # OS buffer never fills, even when the diagnostic text has reached its cap.
 func _drain_pipes_live() -> void:
-	_stdout_text = _bounded_pipe_text(_stdout_text, _read_available_pipe(_stdio))
-	_stderr_text = _bounded_pipe_text(_stderr_text, _read_available_pipe(_stderr))
+	var deadline := Time.get_ticks_msec() + LIVE_DRAIN_BUDGET_MILLIS
+	var idle_spins := 0
+	var read_any := false
+	while Time.get_ticks_msec() < deadline:
+		if _drain_available_pipes() > 0:
+			read_any = true
+			idle_spins = 0
+			continue
+		if not read_any:
+			break
+		idle_spins += 1
+		if idle_spins >= LIVE_DRAIN_IDLE_SPINS:
+			break
+
+
+func _drain_available_pipes() -> int:
+	var stdout_chunk := _read_available_pipe(_stdio)
+	var stderr_chunk := _read_available_pipe(_stderr)
+	_stdout_text = _bounded_pipe_text(_stdout_text, stdout_chunk)
+	_stderr_text = _bounded_pipe_text(_stderr_text, stderr_chunk)
+	return stdout_chunk.length() + stderr_chunk.length()
 
 
 func _bounded_pipe_text(existing: String, chunk: String) -> String:
