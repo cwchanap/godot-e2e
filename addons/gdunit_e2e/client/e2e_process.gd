@@ -177,6 +177,18 @@ func close() -> void:
 	_close_started = false
 
 
+func _process(_delta: float) -> void:
+	# Keep the child's stdout/stderr pipes drained for the whole process
+	# lifetime, not just during launch polling. At log_verbosity = "info"
+	# the automation server print()s every request/response, so a long
+	# otherwise-quiet test can still fill the OS pipe buffer mid-run and
+	# stall the child on its next write. Skipped during close() so this
+	# non-blocking peek can't race the final blocking drain.
+	if _close_started or _dead_confirmed or _pid <= 0:
+		return
+	_drain_pipes_live()
+
+
 func is_running() -> bool:
 	if _pid <= 0 or _dead_confirmed:
 		return false
@@ -287,8 +299,8 @@ func _record_exit_code() -> void:
 
 
 func _drain_pipes() -> void:
-	_stdout_text += await _drain_pipe(_stdio)
-	_stderr_text += await _drain_pipe(_stderr)
+	_stdout_text = _bounded_pipe_text(_stdout_text, await _drain_pipe(_stdio))
+	_stderr_text = _bounded_pipe_text(_stderr_text, await _drain_pipe(_stderr))
 	_close_pipe(_stdio)
 	_close_pipe(_stderr)
 	_stdio = null

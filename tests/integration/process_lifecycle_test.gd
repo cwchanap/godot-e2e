@@ -98,6 +98,44 @@ func test_launch_rejects_a_project_outside_the_current_tree() -> void:
 	assert_bool(_process.is_running()).is_false()
 
 
+# Regression: without a whole-lifetime pipe drain the OS pipe buffer fills
+# mid-test and the child blocks on its next stdout write, so commands stop
+# completing. This calls a fixture method that print()s enough output to
+# overflow a typical 64 KiB pipe buffer in a single command, then verifies a
+# follow-up command still completes. Uses warning verbosity (not info) to
+# avoid the log-capture feedback loop that triggers response_too_large before
+# the pipe can fill.
+func test_runtime_pipe_drain_keeps_commands_completing_under_load() -> void:
+	var options = _options()
+	# --quiet would suppress the fixture's print()s and defeat the test.
+	options.extra_godot_args = PackedStringArray(["--headless"])
+	_process = E2EProcessScript.new(self)
+	add_child(_process)
+
+	var result = await _process.launch(options)
+	assert_bool(result.ok).is_true()
+	if is_failure():
+		return
+
+	var client = _process.get_client()
+	# 4000 lines * ~90 bytes = ~360 KiB, well past a 64 KiB pipe buffer. Without
+	# the _process() drain the child blocks inside emit_noise and this command
+	# times out.
+	var noise_result = await client.send_command(
+		"call_method",
+		{"path": "/root/Main", "method": "emit_noise", "args": [4000]},
+		5.0,
+	)
+	assert_bool(noise_result.ok).is_true()
+	if is_failure():
+		return
+
+	# A follow-up command proves the session is still responsive after the
+	# pipe-heavy call.
+	var follow_up = await client.send_command("node_exists", {"path": "/root/Main"}, 3.0)
+	assert_bool(follow_up.ok).is_true()
+
+
 func _launch():
 	_process = E2EProcessScript.new(self)
 	add_child(_process)
