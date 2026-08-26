@@ -511,7 +511,7 @@ suite add_child(E2EProcess)
 → return GdUnitE2EGame
 ```
 
-The parent does not live-read child stdout/stderr while the child is running.
+The parent performs bounded, non-blocking drains of child stdout and stderr during launch polling so the OS pipe buffer never stalls the child before it writes its port file. The accumulated diagnostic text is capped at `MAX_PIPE_BYTES`, retaining only the most recent output, and both pipes continue to be read even once the cap is reached. A final blocking drain runs after the process exits.
 
 ### 14.3 Normal shutdown
 
@@ -521,7 +521,7 @@ send quit when connected
 → await bounded grace period with suite.await_millis()
 → OS.kill(pid) if still running
 → verify OS.is_process_running(pid) == false
-→ drain stdout/stderr only after death
+→ final drain stdout/stderr after death
 → close pipes
 → best-effort remove port file
 → remove/free E2EProcess Node
