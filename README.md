@@ -4,7 +4,7 @@ Native out-of-process end-to-end testing for Godot, using GDScript tests and
 GdUnit4. A test starts the same Godot project as a separate child process and
 drives it over an authenticated localhost connection.
 
-The 0.1.0 MVP targets Godot 4.5 or newer and GdUnit4 6.x. It keeps GdUnit4 as
+The 0.1.x MVP targets Godot 4.5 or newer and GdUnit4 6.x. It keeps GdUnit4 as
 the test runner, assertion library, lifecycle, CLI, and reporter; this addon
 only supplies the child-process client, automation server, and GdUnit4 suite
 base class.
