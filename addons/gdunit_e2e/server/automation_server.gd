@@ -1,4 +1,4 @@
-## Main Autoload TCP server for the GdUnit E2E addon.
+## Main child-process TCP server for the GdUnit E2E addon.
 ##
 ## Non-blocking state machine that accepts a single TCP connection,
 ## authenticates via a hello/token handshake, and dispatches commands
