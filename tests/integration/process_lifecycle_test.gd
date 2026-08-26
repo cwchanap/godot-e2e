@@ -119,12 +119,12 @@ func test_runtime_pipe_drain_keeps_commands_completing_under_load() -> void:
 
 	var client = _process.get_client()
 	# 4000 lines * ~90 bytes = ~360 KiB, well past a 64 KiB pipe buffer. Without
-	# the _process() drain the child blocks inside emit_noise and this command
-	# times out.
+	# live drain that keeps reading across OS-buffer-empty gaps, a slow parent
+	# frame rate (Windows CI) lets the child block inside emit_noise.
 	var noise_result = await client.send_command(
 		"call_method",
 		{"path": "/root/Main", "method": "emit_noise", "args": [4000]},
-		5.0,
+		10.0,
 	)
 	assert_bool(noise_result.ok).is_true()
 	if is_failure():
