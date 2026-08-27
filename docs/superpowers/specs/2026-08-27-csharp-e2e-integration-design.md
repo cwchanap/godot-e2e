@@ -55,7 +55,7 @@ This change will not:
 - add parallel requests, multiple simultaneous sessions, a process pool, or suite-level child reuse;
 - add a second CI OS/version matrix;
 - guarantee renamed addon-directory discovery from the C# launcher in the first release;
-- make automatic arbitrary gdUnit4Net assertion-failure screenshots a release blocker.
+- automatically capture artifacts for arbitrary gdUnit4Net assertion failures in the first release.
 
 ## 4. Product boundary
 
@@ -163,6 +163,18 @@ It uses the .NET BCL only.
 The C# test project references this client project and the gdUnit4Net packages used for discovery/assertions. It does not reference the Godot game project because E2E tests intentionally treat the game as a black box.
 
 This separation also avoids coupling the C# test harness to whichever GodotSharp version gdUnit4Net itself currently targets.
+
+### 6.2 Root Godot project compile boundary
+
+The new root `godot-e2e.csproj` is the Godot .NET game/fixture project. Its normal recursive C# compile must include `tests/fixtures/csharp/Main.cs`, but explicitly exclude:
+
+```text
+tests/csharp/**/*.cs
+```
+
+Those test sources depend on gdUnit4Net and belong only to `GodotE2E.Tests.csproj`; letting the root Godot project compile them would incorrectly force test-runner packages into the game assembly.
+
+The pure client sources under `addons/gdunit_e2e/csharp/**` may also compile into the Godot project assembly because they are BCL-only. This is harmless and avoids requiring consumer projects to edit their root `.csproj` simply to install the addon.
 
 ## 7. C# test runner integration
 
@@ -273,9 +285,10 @@ Scene/diagnostic:
 - `ChangeSceneAsync`
 - `ReloadSceneAsync`
 - `ScreenshotAsync`
+- `CaptureFailureArtifactsAsync`
 - `SendCommandAsync` as the raw escape hatch
 
-If implementation shows some wrappers add significant conversion complexity and are not needed by acceptance tests, keep `SendCommandAsync` and defer those wrappers. Protocol access is more important than nominal API parity.
+If implementation shows some convenience wrappers add significant conversion complexity and are not needed by acceptance tests, keep `SendCommandAsync` and defer those wrappers. Protocol access is more important than nominal API parity. `CaptureFailureArtifactsAsync` is not optional because it is the supported explicit diagnostic path for C# tests.
 
 ## 9. Failure model
 
@@ -304,7 +317,7 @@ The supported test usage is:
 await using var game = await E2EGame.LaunchAsync(...);
 ```
 
-This guarantees cleanup when:
+This guarantees that cleanup is attempted when:
 
 - the test succeeds;
 - a gdUnit assertion throws;
@@ -352,9 +365,9 @@ best-effort quit command when authenticated
 → delete temp port file best effort
 ```
 
-`DisposeAsync()` is idempotent.
+`DisposeAsync()` is idempotent. If it cannot confirm that an owned child exited, it throws `E2EException`; standard C# `await using` exception semantics apply if disposal itself fails while another exception is unwinding.
 
-A failed cleanup must surface as a test-visible exception when there is no earlier exception already escaping disposal. Do not silently leave a child alive.
+Do not silently leave an owned child alive.
 
 ## 11. Protocol compatibility
 
@@ -419,14 +432,15 @@ The C# test suite launches only C# fixture/game scenes. Cross-language fixture r
 
 The GDScript path keeps its current automatic `after_test()` artifact behavior unchanged.
 
-For C#, first-release requirements are smaller:
+The C# first release provides an explicit diagnostic path:
 
-- keep bounded child stdout/stderr available on launch, protocol, and cleanup failures;
-- provide explicit `CaptureFailureArtifactsAsync()` if implementation can reuse the existing screenshot/tree/log commands cleanly;
-- wrapped E2E failures may best-effort capture diagnostics before throwing if this stays simple;
-- automatic capture after an arbitrary gdUnit4Net assertion failure is deferred unless a stable public runner hook makes it trivial.
+```text
+await game.CaptureFailureArtifactsAsync(...)
+```
 
-Do not couple the client to internal gdUnit4Net execution/reporting classes solely for artifact parity.
+It uses the existing screenshot, scene-tree, and collected-log command paths and writes independent best-effort artifacts. Child stdout/stderr remain available from process diagnostics and are included when the process has exited.
+
+Automatic artifact capture after an arbitrary gdUnit4Net assertion failure is not part of this release. Wrapped E2E methods do not add hidden runner hooks or reflection to detect framework failure state before throwing.
 
 ## 15. Testing strategy
 
@@ -449,6 +463,7 @@ Use the C# test project for focused tests of:
 - serializer conversion for the tags actually used;
 - launch argument construction;
 - executable/project resolution;
+- explicit artifact-path behavior;
 - idempotent disposal with fakes where useful.
 
 Do not duplicate exhaustive command-handler tests already owned by the GDScript/server suite.
@@ -465,12 +480,13 @@ Verify at least:
 4. C# method call and return value;
 5. input/button behavior;
 6. one deterministic server wait;
-7. one signal wait if the fixture includes the signal;
+7. one signal wait;
 8. raw expected negative response;
-9. graceful `DisposeAsync()` reaps the child;
-10. an exception/assertion escaping an `await using` body still reaps the child;
-11. forced cleanup of a child that does not exit gracefully;
-12. no surviving `--gdunit-e2e` process after the C# suite/harness.
+9. explicit failure-artifact capture produces the reachable artifacts;
+10. graceful `DisposeAsync()` reaps the child;
+11. an exception/assertion escaping an `await using` body still attempts cleanup and leaves no child;
+12. forced cleanup of a child that does not exit gracefully;
+13. no surviving `--gdunit-e2e` process after the C# suite/harness.
 
 Do not add mirrored C# integration tests for every existing GDScript integration case.
 
@@ -591,11 +607,12 @@ The C# integration is accepted when:
 
 - all existing GDScript tests continue to pass without public API changes;
 - the repository builds as a Godot 4.5.1 .NET project with the dedicated C# fixture;
+- the root Godot project excludes `tests/csharp/**/*.cs` while compiling the C# fixture;
 - a gdUnit4Net C# test can launch that C# fixture as a real second Godot .NET process;
 - normal C# E2E tests run without requiring a Godot runtime in the VSTest parent process;
 - the C# client connects only to `127.0.0.1` and performs the existing token hello;
 - framing, frame cap, request IDs, response/error interpretation, wait timeout margin, and required serializer tags match protocol v1;
-- representative property, method, input, wait, signal, scene, and raw-command operations work against the C# fixture;
+- representative property, method, input, wait, signal, scene, raw-command, and explicit-artifact operations work against the C# fixture;
 - `await using` cleanup reaps the child when the test succeeds or throws;
 - forced cleanup does not leave a surviving child;
 - existing child orphan-watchdog behavior remains unchanged;
