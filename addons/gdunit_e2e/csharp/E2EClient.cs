@@ -1,0 +1,287 @@
+using System.Net.Sockets;
+using System.Text.Json;
+
+namespace GodotE2E;
+
+/// <summary>
+/// Transport seam so game wrappers depend on command sending, not on
+/// <see cref="E2EClient"/> concretely; a recording sender implements this to
+/// pin wait/reload margins without a real connection.
+/// </summary>
+internal interface IE2ECommandSender
+{
+    Task<E2EResult> SendCommandAsync(
+        string action,
+        IReadOnlyDictionary<string, JsonElement>? parameters = null,
+        TimeSpan timeout = default,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Raw client owning ONE TCP session to the fixed loopback host. Sends the
+/// protocol-v1 hello first, then commands with monotonically increasing ids.
+/// Exactly one command may be in flight; overlapping sends fail fast. Timeouts
+/// use a linked cancellation source; transport failures, disconnects, and
+/// response-id mismatches throw <see cref="E2EException"/>. Responses are
+/// cloned — the caller never sees this client's internal JsonDocument.
+/// Mirrors e2e_client.gd semantics.
+/// </summary>
+public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
+{
+    private TcpClient? _connection;
+    private int _nextId = 1;
+    private readonly SemaphoreSlim _inFlight = new(1, 1);
+    private int _disposed;
+
+    /// <summary>
+    /// Effective transport timeout for a command: wait/reload commands get the
+    /// extra <see cref="E2EProtocol.WaitMargin"/> on top of the default.
+    /// </summary>
+    public static TimeSpan CommandTimeoutFor(string action) =>
+        action.StartsWith("wait", StringComparison.Ordinal) || action == "reload_scene"
+            ? E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin
+            : E2EProtocol.DefaultCommandTimeout;
+
+    public async Task<E2EResult> ConnectAsync(
+        int port,
+        string token,
+        TimeSpan timeout = default,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        using var gate = AcquireInFlightOrThrow();
+
+        var effective = timeout == default ? E2EProtocol.DefaultCommandTimeout : timeout;
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(effective);
+
+        var connection = new TcpClient();
+        try
+        {
+            await connection.ConnectAsync(E2EProtocol.Host, port, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            connection.Dispose();
+            throw new E2EException(
+                $"Connect to {E2EProtocol.Host}:{port} timed out after {(int)effective.TotalMilliseconds} ms");
+        }
+        catch (Exception e)
+        {
+            connection.Dispose();
+            throw new E2EException($"Failed to connect to {E2EProtocol.Host}:{port}", e);
+        }
+
+        _connection = connection;
+        var result = await SendCoreAsync(
+            "hello",
+            new Dictionary<string, JsonElement>
+            {
+                ["token"] = JsonSerializer.SerializeToElement(token),
+                ["protocol_version"] = JsonSerializer.SerializeToElement(E2EProtocol.ProtocolVersion),
+            },
+            effective,
+            cancellationToken,
+            gate);
+        // e2e_client.gd drops the peer when the hello handshake fails.
+        if (!result.Success)
+            DropConnection();
+        return result;
+    }
+
+    public Task<E2EResult> SendCommandAsync(
+        string action,
+        IReadOnlyDictionary<string, JsonElement>? parameters = null,
+        TimeSpan timeout = default,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var gate = AcquireInFlightOrThrow();
+        var effective = timeout == default ? CommandTimeoutFor(action) : timeout;
+        return SendCoreAsync(action, parameters, effective, cancellationToken, gate);
+    }
+
+    private async Task<E2EResult> SendCoreAsync(
+        string action,
+        IReadOnlyDictionary<string, JsonElement>? parameters,
+        TimeSpan timeout,
+        CancellationToken cancellationToken,
+        InFlightGate gate)
+    {
+        var connection = _connection;
+        if (connection is null)
+        {
+            gate.Dispose();
+            throw new E2EException("E2E session is not open");
+        }
+
+        var commandId = _nextId++;
+        var command = new Dictionary<string, JsonElement>
+        {
+            ["id"] = JsonSerializer.SerializeToElement(commandId),
+            ["action"] = JsonSerializer.SerializeToElement(action),
+        };
+        if (parameters is not null)
+            foreach (var (key, value) in parameters)
+                command[key] = value;
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeout);
+        try
+        {
+            var stream = connection.GetStream();
+            await E2EFraming.WriteFrameAsync(
+                stream, JsonSerializer.SerializeToUtf8Bytes(command), timeoutCts.Token);
+            var body = await E2EFraming.ReadFrameAsync(stream, timeoutCts.Token);
+            using var document = JsonDocument.Parse(body);
+            return BuildResult(action, commandId, document.RootElement);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A timed-out session may hold a late response; it is unusable.
+            DropConnection();
+            throw new E2EException(
+                $"Command '{action}' timed out after {(int)timeout.TotalMilliseconds} ms");
+        }
+        catch (Exception e) when (e is EndOfStreamException or IOException or SocketException or ObjectDisposedException)
+        {
+            DropConnection();
+            throw new E2EException($"Connection lost while waiting for '{action}'", e);
+        }
+        catch (E2EException)
+        {
+            DropConnection();
+            throw;
+        }
+        finally
+        {
+            gate.Dispose();
+        }
+    }
+
+    private InFlightGate AcquireInFlightOrThrow()
+    {
+        // Timeout 0 always completes synchronously: fail fast, never queue.
+        if (!_inFlight.WaitAsync(0).GetAwaiter().GetResult())
+            throw new E2EException("A command is already in flight");
+        return new InFlightGate(_inFlight);
+    }
+
+    private E2EResult BuildResult(string action, int commandId, JsonElement response)
+    {
+        if (response.ValueKind != JsonValueKind.Object)
+            throw new E2EException("Invalid response message");
+
+        bool hasId = response.TryGetProperty("id", out var idElement);
+        // e2e_client.gd: a response without "id" is accepted only when it
+        // carries an "error"; anything else is an id mismatch.
+        var matches = hasId
+            ? idElement.ValueKind == JsonValueKind.Number && idElement.GetInt32() == commandId
+            : response.TryGetProperty("error", out _);
+        if (!matches)
+            throw new E2EException(
+                $"Unexpected response id {(hasId ? idElement.ToString() : "<null>")} for '{action}'");
+
+        return new E2EResult
+        {
+            Success = !response.TryGetProperty("error", out _),
+            Value = CloneWithoutLogKeys(response),
+            Message = response.TryGetProperty("error", out _) ? RenderError(response) : string.Empty,
+            Logs = ExtractLogs(response),
+        };
+    }
+
+    private static string RenderError(JsonElement response)
+    {
+        var errorText = StringifyProperty(response, "error");
+        var detail = StringifyProperty(response, "message");
+        if (errorText.Length == 0)
+            return detail;
+        if (detail.Length == 0 || detail == errorText)
+            return errorText;
+        return $"{errorText}: {detail}";
+    }
+
+    private static string StringifyProperty(JsonElement response, string name) =>
+        response.TryGetProperty(name, out var value)
+            ? value.ValueKind == JsonValueKind.String ? value.GetString()! : value.ToString()
+            : string.Empty;
+
+    private static List<JsonElement> ExtractLogs(JsonElement response)
+    {
+        var entries = new List<JsonElement>();
+        if (response.TryGetProperty("_logs", out var rawLogs)
+            && rawLogs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in rawLogs.EnumerateArray())
+                entries.Add(entry.Clone());
+        }
+
+        if (response.TryGetProperty("_logs_dropped", out var dropped)
+            && dropped.ValueKind == JsonValueKind.Number
+            && dropped.GetInt32() > 0)
+        {
+            entries.Add(JsonDocument.Parse(
+                $"{{\"level\":\"warning\",\"message\":\"<{dropped.GetInt32()}> log entries dropped due to capture buffer overflow\"}}").RootElement.Clone());
+        }
+
+        return entries;
+    }
+
+    private static JsonElement CloneWithoutLogKeys(JsonElement response)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            foreach (var property in response.EnumerateObject())
+            {
+                if (property.Name is "_logs" or "_logs_dropped")
+                    continue;
+                property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+        }
+
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        return document.RootElement.Clone();
+    }
+
+    /// <summary>Drops the session. Idempotent.</summary>
+    private void DropConnection()
+    {
+        var connection = Interlocked.Exchange(ref _connection, null);
+        if (connection is not null)
+            connection.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        DropConnection();
+        _inFlight.Dispose();
+        await Task.CompletedTask;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+    }
+
+    /// <summary>Releases the one-in-flight slot exactly once, even if both the
+    /// owning scope and SendCoreAsync's finally try.</summary>
+    private sealed class InFlightGate : IDisposable
+    {
+        private readonly SemaphoreSlim _semaphore;
+        private int _released;
+
+        public InFlightGate(SemaphoreSlim semaphore) => _semaphore = semaphore;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+                _semaphore.Release();
+        }
+    }
+}
