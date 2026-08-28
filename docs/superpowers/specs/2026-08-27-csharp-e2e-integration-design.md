@@ -347,7 +347,7 @@ Wrapped remote-operation failures throw `E2EException`. gdUnit4Net/VSTest report
 
 ## 11. Process ownership and cleanup
 
-`E2EGame` implements `IAsyncDisposable` and owns one `E2EProcess`.
+`E2EGame` implements `IAsyncDisposable` and owns one `E2EProcess` in production. An internal non-owning command-sender constructor exists only for facade unit tests and has no process to dispose.
 
 Launch:
 
