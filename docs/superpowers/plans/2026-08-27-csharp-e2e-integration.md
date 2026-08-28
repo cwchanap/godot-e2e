@@ -179,7 +179,7 @@ obj/
 TestResults/
 ```
 
-- [ ] **Step 5: Restore and run RED/GREEN runner smoke**
+- [ ] **Step 5: Restore and run runner smoke**
 
 ```bash
 dotnet restore tests/csharp/GodotE2E.Tests.csproj
