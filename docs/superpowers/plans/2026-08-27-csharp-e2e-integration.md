@@ -98,14 +98,11 @@ Framing owns bytes, `E2EClient` owns one TCP session, `E2EProcess` owns one OS c
 - Modify: `.gitignore`
 
 **Interfaces:**
-- Produces a pure `net8.0` `GodotE2E.Client` project.
-- Produces an internal-test visibility seam through `InternalsVisibleTo("GodotE2E.Tests")`.
-- Produces `TestPaths.RepositoryRoot` for source-contract tests and integration helpers.
-- Produces `dotnet test tests/csharp/GodotE2E.Tests.csproj` without starting Godot.
+- Pure `net8.0` client project.
+- `InternalsVisibleTo("GodotE2E.Tests")` for narrowly scoped test seams.
+- `TestPaths.RepositoryRoot` shared by source-contract/integration tests.
 
-- [ ] **Step 1: Add the BCL-only client project and keep it out of Godot resource scanning**
-
-Create an empty `addons/gdunit_e2e/csharp/.gdignore` and:
+- [ ] **Step 1: Add the BCL-only client project and `.gdignore`**
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -119,102 +116,34 @@ Create an empty `addons/gdunit_e2e/csharp/.gdignore` and:
 </Project>
 ```
 
-Create `AssemblyInfo.cs`:
+`AssemblyInfo.cs`:
 
 ```csharp
 using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("GodotE2E.Tests")]
 ```
 
-- [ ] **Step 2: Add the isolated gdUnit4Net test project with exact pins**
+- [ ] **Step 2: Add isolated gdUnit4Net test project**
 
-```xml
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>12.0</LangVersion>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <IsTestProject>true</IsTestProject>
-    <RootNamespace>GodotE2E.Tests</RootNamespace>
-  </PropertyGroup>
+Reference only client project plus exact package pins; no direct GodotSharp and no game-project reference.
 
-  <ItemGroup>
-    <ProjectReference Include="../../addons/gdunit_e2e/csharp/GodotE2E.Client.csproj" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="gdUnit4.api" Version="5.0.0" />
-    <PackageReference Include="gdUnit4.test.adapter" Version="3.0.0" PrivateAssets="all" />
-    <PackageReference Include="gdUnit4.analyzers" Version="1.0.0">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-  </ItemGroup>
-</Project>
-```
+- [ ] **Step 3: Add `TestPaths.RepositoryRoot` locator**
 
-Do not add a direct GodotSharp reference and do not reference `GodotE2E.csproj`.
+Walk upward from current directory and `AppContext.BaseDirectory` until `project.godot` is found.
 
-- [ ] **Step 3: Add the reusable repository-root locator**
+- [ ] **Step 4: Add runner smoke test without `[RequireGodotRuntime]`**
 
-```csharp
-namespace GodotE2E.Tests;
+`[TestSuite]` + `[TestCase]`, assert `1 == 1`.
 
-internal static class TestPaths
-{
-    public static string RepositoryRoot { get; } = FindRepositoryRoot();
+- [ ] **Step 5: Ignore `bin/`, `obj/`, `TestResults/`**
 
-    private static string FindRepositoryRoot()
-    {
-        foreach (var start in new[] { Directory.GetCurrentDirectory(), AppContext.BaseDirectory })
-        {
-            var current = new DirectoryInfo(Path.GetFullPath(start));
-            while (current is not null)
-            {
-                if (File.Exists(Path.Combine(current.FullName, "project.godot")))
-                    return current.FullName;
-                current = current.Parent;
-            }
-        }
-        throw new InvalidOperationException("Unable to locate godot-e2e repository root");
-    }
-}
-```
-
-- [ ] **Step 4: Add a runner-only test with no Godot runtime attribute**
-
-```csharp
-namespace GodotE2E.Tests;
-
-using GdUnit4;
-using static GdUnit4.Assertions;
-
-[TestSuite]
-public sealed class RunnerSmokeTest
-{
-    [TestCase]
-    public void RunsWithoutGodotRuntime() => AssertThat(1).IsEqual(1);
-}
-```
-
-- [ ] **Step 5: Ignore managed build/test output**
-
-Append:
-
-```gitignore
-bin/
-obj/
-TestResults/
-```
-
-- [ ] **Step 6: Restore, run, and prove the client has no packages**
+- [ ] **Step 6: Restore/run + prove client has no packages**
 
 ```bash
 dotnet restore tests/csharp/GodotE2E.Tests.csproj
 dotnet test tests/csharp/GodotE2E.Tests.csproj --no-restore --filter "FullyQualifiedName~RunnerSmokeTest"
 dotnet list addons/gdunit_e2e/csharp/GodotE2E.Client.csproj package
 ```
-
-Expected: one passing test; client reports no package references.
 
 - [ ] **Step 7: Commit**
 
@@ -225,170 +154,34 @@ git commit -m "test: bootstrap csharp e2e runner"
 
 ---
 
-### Task 2: Convert the repository to a real Godot .NET project and add the C# fixture
+### Task 2: Convert repository to Godot .NET and add C# fixture
 
-**Files:**
-- Modify: `project.godot`
-- Create: `GodotE2E.csproj`
-- Create: `GodotE2E.sln`
-- Create: `tests/fixtures/csharp/Main.cs`
-- Create: `tests/fixtures/csharp/main.tscn`
-- Create after Godot import: `tests/fixtures/csharp/Main.cs.uid`
-- Modify: `tests/integration/gameplay_smoke_test.gd`
-- Modify: `tests/integration/process_lifecycle_test.gd`
-- Modify: `tests/integration/server_startup_test.gd`
+**Files:** `project.godot`, new `GodotE2E.csproj`, `GodotE2E.sln`, C# fixture + UID, three GDScript integration helpers.
 
-**Interfaces:**
-- Produces Godot project assembly identity `GodotE2E` through `project.godot` + matching project/solution filenames, not a custom `<AssemblyName>`.
-- Produces C# scene `res://tests/fixtures/csharp/main.tscn` rooted at `/root/Main`.
-- Produces `Echo(string)`, `SchedulePulse(double)`, `BlockMainThread(int)`, signal `Pulse`, and properties `ActionCount`/`ActionPressed`.
-- Ordinary GDScript integration launches use the existing 10-second product default.
+- [ ] **Step 1: Add Godot C# metadata + root project**
 
-- [ ] **Step 1: Add Godot C# project metadata and root project**
+`project.godot` declares C# and `project/assembly_name="GodotE2E"`. `GodotE2E.csproj` uses `Godot.NET.Sdk/4.5.1`, targets `net8.0`, excludes `tests/csharp/**/*.cs` and `addons/gdunit_e2e/csharp/**/*.cs`, and has **no manual `<AssemblyName>`**. Create `GodotE2E.sln` with only the game project.
 
-Add the C# feature and:
+- [ ] **Step 2: Add fixture script**
 
-```ini
-[dotnet]
+C# root supports action state, button click, `Echo`, delayed `Pulse`, and fixture-only `BlockMainThread`.
 
-project/assembly_name="GodotE2E"
-```
+- [ ] **Step 3: Add fixture scene**
 
-Keep GL Compatibility.
+Stable `/root/Main`, `Status`, `ClickStatus`, `Button` paths.
 
-Create `GodotE2E.csproj`:
+- [ ] **Step 4: Remove only ordinary `timeout_seconds = 5.0` launch overrides**
 
-```xml
-<Project Sdk="Godot.NET.Sdk/4.5.1">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <EnableDynamicLoading>true</EnableDynamicLoading>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+From gameplay smoke, process lifecycle, and server startup helpers. Keep behavior-specific short timeout values (e.g. invalid startup 0.25s).
 
-  <ItemGroup>
-    <Compile Remove="tests/csharp/**/*.cs" />
-    <Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />
-  </ItemGroup>
-</Project>
-```
-
-Do **not** add `<AssemblyName>`; Godot 4.5 can misresolve C# scripts when it is overridden.
-
-Create the solution with only the game project:
-
-```bash
-dotnet new sln -n GodotE2E
-dotnet sln GodotE2E.sln add GodotE2E.csproj
-```
-
-- [ ] **Step 2: Add the C# fixture script**
-
-```csharp
-using Godot;
-using System.Threading;
-
-public partial class Main : Node2D
-{
-    [Signal]
-    public delegate void PulseEventHandler(string value);
-
-    [Export]
-    public int ActionCount { get; set; }
-
-    [Export]
-    public bool ActionPressed { get; set; }
-
-    public override void _Ready()
-    {
-        GetNode<Button>("Button").Pressed += () =>
-            GetNode<Label>("ClickStatus").Text = "clicked";
-    }
-
-    public override void _UnhandledInput(InputEvent @event)
-    {
-        if (@event.IsActionPressed("ui_accept"))
-        {
-            ActionCount += 1;
-            ActionPressed = true;
-            GetNode<Label>("Status").Text = $"accepted:{ActionCount}";
-        }
-        else if (@event.IsActionReleased("ui_accept"))
-        {
-            ActionPressed = false;
-        }
-    }
-
-    public string Echo(string value) => $"csharp:{value}";
-
-    public void SchedulePulse(double delaySeconds)
-    {
-        GetTree().CreateTimer(delaySeconds).Timeout += () =>
-            EmitSignal(SignalName.Pulse, "pulse");
-    }
-
-    public int BlockMainThread(int milliseconds)
-    {
-        Thread.Sleep(milliseconds);
-        return milliseconds;
-    }
-}
-```
-
-- [ ] **Step 3: Add the fixture scene with stable paths**
-
-```text
-[gd_scene load_steps=2 format=3]
-
-[ext_resource type="Script" path="res://tests/fixtures/csharp/Main.cs" id="1_main"]
-
-[node name="Main" type="Node2D"]
-script = ExtResource("1_main")
-
-[node name="Status" type="Label" parent="."]
-offset_left = 24.0
-offset_top = 24.0
-offset_right = 300.0
-offset_bottom = 60.0
-text = "ready"
-
-[node name="ClickStatus" type="Label" parent="."]
-offset_left = 24.0
-offset_top = 72.0
-offset_right = 300.0
-offset_bottom = 108.0
-text = "not clicked"
-
-[node name="Button" type="Button" parent="."]
-offset_left = 24.0
-offset_top = 128.0
-offset_right = 184.0
-offset_bottom = 176.0
-text = "Click"
-```
-
-- [ ] **Step 4: Remove only non-semantic 5-second GDScript launch overrides**
-
-Delete ordinary `options.timeout_seconds = 5.0` assignments from:
-
-```text
-tests/integration/gameplay_smoke_test.gd
-tests/integration/process_lifecycle_test.gd
-tests/integration/server_startup_test.gd
-```
-
-Keep short values such as invalid-startup `0.25` seconds because they are the behavior under test.
-
-- [ ] **Step 5: Build and import once to generate the C# UID**
+- [ ] **Step 5: Build + Godot import once to generate `Main.cs.uid`**
 
 ```bash
 dotnet build GodotE2E.csproj
 "${GODOT_BIN:-godot}" --headless --editor --path . --quit
 ```
 
-Commit generated `tests/fixtures/csharp/Main.cs.uid`; do not commit `.godot/**`.
-
-- [ ] **Step 6: Verify behavior, not file literals**
+- [ ] **Step 6: Verify behavior, not authored file strings**
 
 ```bash
 dotnet sln GodotE2E.sln list
@@ -398,375 +191,108 @@ test -f tests/fixtures/csharp/Main.cs.uid
 ./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
 ```
 
-Expected: solution lists only `GodotE2E.csproj`; build and existing GDScript suites pass. Do not add greps or GDScript assertions that merely restate the `project.godot`/`.csproj` strings written in this task.
+No project.godot/csproj literal-content assertions or grep checks.
 
 - [ ] **Step 7: Commit**
 
-```bash
-git add project.godot GodotE2E.csproj GodotE2E.sln tests/fixtures/csharp tests/integration
-git commit -m "test: add csharp godot fixture"
-```
+---
+
+### Task 3: Framing, minimal typed value, and drift guards
+
+Create protocol/framing/json/value/result/exception C# files and `ProtocolTest.cs`.
+
+- [ ] **Step 1: RED tests** cover BE framing/partial reads, pre-allocation oversize rejection, null, v2, unsupported v3 tag loud failure, and source drift.
+
+Drift test reads GDScript protocol + process source and asserts C# copies match protocol version, frame cap, default command timeout, wait margin, and 4 MiB pipe bound.
+
+- [ ] **Step 2: Run RED**.
+
+- [ ] **Step 3: Implement constants** including `MaxPipeBytes = 4 * 1024 * 1024`.
+
+- [ ] **Step 4: Implement framing** with exact-read loops and size check before body allocation.
+
+- [ ] **Step 5: Implement conversion**: only v2 typed support; any other `_t` throws `Unsupported Godot value tag '<tag>'; use SendCommandAsync for raw access`; only untagged JSON gets generic deserialization.
+
+- [ ] **Step 6: Run GREEN C# protocol + existing GDScript serializer tests**.
+
+- [ ] **Step 7: Commit**.
 
 ---
 
-### Task 3: Implement framing, minimal typed values, and drift guards
+### Task 4: Raw TCP client
 
-**Files:**
-- Create: `addons/gdunit_e2e/csharp/E2EProtocol.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EFraming.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EJson.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EValueTypes.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EResult.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EException.cs`
-- Create: `tests/csharp/ProtocolTest.cs`
+Create `IE2ECommandSender`, `E2EClient`, fake protocol server, client tests.
 
-**Interfaces:**
-- Produces `E2EProtocol.ProtocolVersion = 1`, `MaxFrameBytes = 16 MiB`, `DefaultCommandTimeout = 5s`, `WaitMargin = 1s`, `MaxPipeBytes = 4 MiB`.
-- Produces `E2EFraming.Encode(JsonElement)` and `ReadAsync(Stream, CancellationToken)`.
-- Produces `E2EJson.NormalizeForWire(object?)` and `Convert<T>(JsonElement)`.
-- Produces only `E2EVector2(double X, double Y)` as the first Godot-specific stand-in.
-- Unsupported `_t` typed conversion throws and points callers to raw `SendCommandAsync`.
-
-- [ ] **Step 1: Write RED framing/value/drift tests**
-
-Cover framing, partial reads, oversized declaration before body allocation, JSON null, `v2`, unsupported tagged fallback, and protocol drift.
-
-The unsupported-tag test must verify a `v3` payload does not silently deserialize into `E2EVector2`:
-
-```csharp
-var wire = JsonSerializer.SerializeToElement(new { _t = "v3", x = 1, y = 2, z = 3 });
-var message = "";
-try
-{
-    _ = E2EJson.Convert<E2EVector2>(wire);
-}
-catch (E2EException exception)
-{
-    message = exception.Message;
-}
-AssertThat(message).Contains("Unsupported Godot value tag 'v3'");
-```
-
-`ProtocolConstantsMatchGdScriptContract()` reads `addons/gdunit_e2e/protocol/e2e_protocol.gd` and `addons/gdunit_e2e/client/e2e_process.gd` from `TestPaths.RepositoryRoot`. Regex the relevant declarations and assert evaluated values equal the C# constants. This is a deliberate two-implementation drift guard.
-
-- [ ] **Step 2: Run RED tests**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ProtocolTest"
-```
-
-- [ ] **Step 3: Add exact constants and result/exception/value types**
-
-```csharp
-public static class E2EProtocol
-{
-    public const int ProtocolVersion = 1;
-    public const uint MaxFrameBytes = 16u * 1024u * 1024u;
-    public const int MaxPipeBytes = 4 * 1024 * 1024;
-    public static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(5);
-    public static readonly TimeSpan WaitMargin = TimeSpan.FromSeconds(1);
-}
-```
-
-Add `E2EException`, `E2EVector2`, and `E2EResult` with cloned response/log `JsonElement` values.
-
-- [ ] **Step 4: Implement framing with exact reads and allocation guard**
-
-Encode UTF-8 JSON with a four-byte BE prefix. Read exactly four header bytes, reject a declared length above `MaxFrameBytes` before allocating the body, then read/parse the exact body and require an object root.
-
-- [ ] **Step 5: Implement minimal value conversion with loud tagged fallback**
-
-Handle JSON null first; support only `v2 -> E2EVector2`. If an object has `_t` and that tagged conversion is not explicitly supported, throw:
-
-```text
-Unsupported Godot value tag '<tag>'; use SendCommandAsync for raw access
-```
-
-Only untagged JSON falls through to generic `Deserialize<T>()`.
-
-- [ ] **Step 6: Run GREEN C# protocol + existing GDScript serializer tests**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ProtocolTest"
-./addons/gdUnit4/runtest.sh -a tests/unit/serializer_test.gd -c
-```
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add addons/gdunit_e2e/csharp tests/csharp/ProtocolTest.cs
-git commit -m "feat: add csharp e2e protocol primitives"
-```
+- [ ] **Step 1:** loopback fake server using shared C# framing.
+- [ ] **Step 2:** RED tests for hello/IDs, partial reads, errors, logs, timeout/disconnect, fail-fast overlap.
+- [ ] **Step 3:** run RED.
+- [ ] **Step 4:** implement fixed-host client, hello, monotonic IDs, `SemaphoreSlim.WaitAsync(0)` fail-fast.
+- [ ] **Step 5:** implement linked-cancellation timeouts, response-id check, cloned response/logs, raw failures.
+- [ ] **Step 6:** GREEN.
+- [ ] **Step 7:** commit.
 
 ---
 
-### Task 4: Implement the raw TCP client with one fail-fast in-flight request
+### Task 5: Real Godot child process
 
-**Files:**
-- Create: `addons/gdunit_e2e/csharp/E2EClient.cs`
-- Create: `addons/gdunit_e2e/csharp/IE2ECommandSender.cs`
-- Create: `tests/csharp/FakeProtocolServer.cs`
-- Create: `tests/csharp/ClientTest.cs`
+Create launch options/process/raw game factory + TestProject/process lifecycle tests.
 
-**Interfaces:**
-- Internal `IE2ECommandSender` exposes raw send + collected logs for facade unit tests.
-- `E2EClient.ConnectAsync`, `SendCommandAsync`, `IsSessionOpen`, `CollectedLogs`, idempotent disposal.
-- Overlap returns `A command is already in flight` immediately; no queue.
-
-- [ ] **Step 1: Add the loopback fake server**
-
-Use `TcpListener(IPAddress.Loopback, 0)`, `E2EFraming`, scripted response handler, and recorded requests.
-
-- [ ] **Step 2: Write RED client tests**
-
-Cover hello shape/ID, next request ID, normalized parameters, partial reads, error rendering, log stripping/collection, timeout/disconnect, and fail-fast overlap.
-
-- [ ] **Step 3: Run RED client tests**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ClientTest"
-```
-
-- [ ] **Step 4: Implement hello + raw command state**
-
-Use fixed host `127.0.0.1`, monotonic IDs, and `SemaphoreSlim.WaitAsync(0)` as the fail-fast gate.
-
-- [ ] **Step 5: Implement timeout/error/log handling**
-
-Use linked cancellation with `CancelAfter(timeout)`. Raw transport/protocol failures return `E2EResult.Failure`; verify response IDs and clone response/log elements before document disposal.
-
-- [ ] **Step 6: Run GREEN tests and commit**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ClientTest"
-git add addons/gdunit_e2e/csharp tests/csharp/FakeProtocolServer.cs tests/csharp/ClientTest.cs
-git commit -m "feat: add csharp e2e tcp client"
-```
+- [ ] **Step 1:** RED argv/default/path tests, including `--gdunit-e2e-port=<ServerPort>`.
+- [ ] **Step 2:** run RED.
+- [ ] **Step 3:** Process.Start with ArgumentList and continuous bounded byte-stream drains. Consume all stdout/stderr but retain newest 4 MiB only; no unbounded `ReadToEndAsync` storage.
+- [ ] **Step 4:** port-file polling + hello, 10s launch deadline, reap on failure.
+- [ ] **Step 5:** quit, <=1s graceful wait, whole-tree kill, <=1s confirmation, drains/temp cleanup, strict failure if still alive.
+- [ ] **Step 6:** TestProject uses C# fixture, GODOT_BIN, 10s default.
+- [ ] **Step 7:** real launch/raw node_exists/dispose/PID-dead test; add output-load boundedness regression if needed.
+- [ ] **Step 8:** build + GREEN.
+- [ ] **Step 9:** commit.
 
 ---
 
-### Task 5: Launch, drain, authenticate, and reap the real Godot .NET child
+### Task 6: Lean facade, wait margin, RunAsync, artifacts
 
-**Files:**
-- Create: `addons/gdunit_e2e/csharp/E2ELaunchOptions.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EProcess.cs`
-- Create: `addons/gdunit_e2e/csharp/E2EGame.cs` (raw session/factory only)
-- Create: `tests/csharp/TestProject.cs`
-- Create: `tests/csharp/ProcessLifecycleTest.cs`
-
-**Interfaces:**
-- `E2ELaunchOptions`: scene/project/Godot path, 10s launch timeout, args, warning verbosity, server port 0, bootstrap path.
-- `E2EProcess` owns process, bounded drain tasks, temp port file, authenticated client.
-- `E2EGame.LaunchAsync` owns one process and exposes process ID/project path/bounded stdout+stderr/raw send/dispose.
-
-- [ ] **Step 1: Write RED option/argv tests**
-
-Pin `--path`, `--scene`, extra Godot args, `--`, then E2E user flags including `--gdunit-e2e-port=<ServerPort>`. Pin project lookup and `GodotPath -> GODOT_BIN -> PATH` resolution.
-
-- [ ] **Step 2: Run RED lifecycle tests**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ProcessLifecycleTest"
-```
-
-- [ ] **Step 3: Implement process start and truly bounded continuous pipe drains**
-
-Use `ProcessStartInfo.ArgumentList`, `UseShellExecute=false`, redirected stdout/stderr. Immediately drain both `BaseStream`s into fixed-size byte-tail/ring buffers. Consume all OS pipe bytes but retain no more than `E2EProtocol.MaxPipeBytes` per stream. Do not store an unbounded `ReadToEndAsync` string.
-
-- [ ] **Step 4: Implement launch polling and authentication**
-
-Create unique temp dir/port file; poll child exit/valid port until 10s deadline. Reap on early exit or handshake failure; include bounded pipe tails in launch diagnostics.
-
-- [ ] **Step 5: Implement bounded shutdown + kill fallback**
-
-Best-effort quit, client close, <=1s wait, whole-tree kill if needed, <=1s wait again, finish drains, clean temp, throw if death still unconfirmed. Repeated successful disposal is a no-op.
-
-- [ ] **Step 6: Add TestProject helper**
-
-Use `TestPaths.RepositoryRoot`, C# fixture scene, `GODOT_BIN`, 10s timeout, `--quiet`, plus `IsProcessRunning(pid)`.
-
-- [ ] **Step 7: Add first real C# -> C# lifecycle test**
-
-Launch, raw `node_exists("/root/Main")`, dispose, assert PID dead. Add output-load coverage if needed and assert retained diagnostics remain bounded.
-
-- [ ] **Step 8: Build + run GREEN lifecycle tests and commit**
-
-```bash
-dotnet build GodotE2E.csproj
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~ProcessLifecycleTest"
-git add addons/gdunit_e2e/csharp tests/csharp/TestProject.cs tests/csharp/ProcessLifecycleTest.cs
-git commit -m "feat: launch csharp godot e2e child"
-```
+- [ ] **Step 1:** RED C#-fixture facade tests using RunAsync.
+- [ ] **Step 2:** recording `IE2ECommandSender` pins WaitForProperty +1s, WaitForSignal +1s, Reload +1s; no duplicate real timing-race test.
+- [ ] **Step 3:** run RED.
+- [ ] **Step 4:** implement only accepted wrapper subset through one failure mapper.
+- [ ] **Step 5:** explicit independent best-effort screenshot/tree/log/process-tail artifacts.
+- [ ] **Step 6:** implement RunAsync with caller file/member path `test_output/csharp/<suite>/<test>`, safe path components, ExceptionDispatchInfo. If body + cleanup fail, preserve/rethrow original body failure and attach cleanup detail as secondary diagnostic; cleanup-only failure still throws.
+- [ ] **Step 7:** deterministic named artifact regression; no timestamp/GUID scan.
+- [ ] **Step 8:** body-failure cleanup + fixture-only blocked-child force-kill regressions.
+- [ ] **Step 9:** full C# + existing GDScript GREEN.
+- [ ] **Step 10:** commit.
 
 ---
 
-### Task 6: Add the lean facade, wait-margin seam, failure lifecycle, and artifacts
+### Task 7: GDScript-only clean bootstrap, CI, package, README
 
-**Files:**
-- Modify: `addons/gdunit_e2e/csharp/E2EGame.cs`
-- Modify: `addons/gdunit_e2e/csharp/E2EJson.cs`
-- Modify: `tests/fixtures/csharp/Main.cs`
-- Create: `tests/csharp/GameApiTest.cs`
-- Create: `tests/csharp/GameplaySmokeTest.cs`
-- Modify: `tests/csharp/ProcessLifecycleTest.cs`
-
-**Interfaces:**
-- Public wrappers: node/property/method/scene, action/press/click, property/signal waits, reload, screenshot, explicit artifacts, raw send.
-- No wrappers yet for get_tree, key/mouse-button input, frame/seconds waits, wait_for_node, change_scene.
-- `RunAsync` is the normal first-party lifecycle.
-
-- [ ] **Step 1: Write RED facade tests against only the C# fixture**
-
-Use `RunAsync` for normal tests and cover property/method/vector2/action/click/wait/signal/reload/raw-negative flows.
-
-- [ ] **Step 2: Add recording command-sender margin test**
-
-Through internal non-owning `E2EGame`, assert property wait 2.5s -> 3.5s transport, signal wait 1.0s -> 2.0s, reload -> 6.0s. Do not add another real server timing-race test.
-
-- [ ] **Step 3: Run RED facade tests**
-
-```bash
-dotnet test tests/csharp/GodotE2E.Tests.csproj --filter "FullyQualifiedName~GameApiTest|FullyQualifiedName~GameplaySmokeTest"
-```
-
-- [ ] **Step 4: Implement wrappers through one failure mapper**
-
-Wrapped failures throw `E2EException`; typed results use `E2EJson.Convert<T>`; wait/reload deadlines add `WaitMargin`.
-
-- [ ] **Step 5: Implement explicit artifact capture**
-
-Independently attempt screenshot, raw get_tree, logs, and exited-process pipe tails. Diagnostic failures are best effort and cannot replace caller failures.
-
-- [ ] **Step 6: Implement RunAsync with stable suite/test path and primary-failure precedence**
-
-Signature uses `[CallerMemberName]` + `[CallerFilePath]`. Default directory:
-
-```text
-<resolved project>/test_output/csharp/<safe caller-file-name>/<safe testName>/
-```
-
-Capture body exception with `ExceptionDispatchInfo`; capture reachable artifacts; retain cleanup exception separately; append bounded pipe diagnostics. If only cleanup fails, throw it. If body already failed, attach cleanup text in `bodyException.Data["GodotE2E.CleanupFailure"]` and diagnostics, then rethrow the original body exception through `ExceptionDispatchInfo`.
-
-- [ ] **Step 7: Add deterministic RunAsync artifact regression**
-
-Test exact path `test_output/csharp/GameplaySmokeTest/RunAsyncCapturesBodyFailureArtifacts/`; no GUID scan/global directory cleanup.
-
-- [ ] **Step 8: Add body-failure cleanup and fixture-only blocked-child kill regressions**
-
-Use `BlockMainThread(5000)` with ~100ms raw command timeout. No production kill toggle.
-
-- [ ] **Step 9: Run GREEN same-language suites and commit**
-
-```bash
-dotnet build GodotE2E.csproj
-dotnet test tests/csharp/GodotE2E.Tests.csproj
-./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
-git add addons/gdunit_e2e/csharp tests/csharp tests/fixtures/csharp/Main.cs
-git commit -m "feat: add csharp e2e game facade"
-```
-
----
-
-### Task 7: Restore GDScript-only bootstrap coverage, wire CI, package, and docs
-
-**Files:**
-- Modify: `tests/scripts/bootstrap_gdunit4_import_test.sh`
-- Create: `tests/scripts/assert_no_e2e_children.sh`
-- Create: `tests/scripts/package_release_test.sh`
-- Modify: `.github/workflows/ci.yml`
-- Modify: `README.md`
-
-**Interfaces:**
-- Keeps one Linux and one Windows job running both supported same-language paths.
-- Clean-bootstrap proves shipped addon import in a temporary project with no C# game metadata/fixture.
-- README gives separate GDScript/C# setup and requires C# game compile exclusion for client sources.
-
-- [ ] **Step 1: Restore clean bootstrap to GDScript-only consumer shape**
-
-After archive extraction remove `GodotE2E.csproj`, `GodotE2E.sln`, `tests/csharp`, `tests/fixtures/csharp`; keep shipped `addons/gdunit_e2e/csharp/**`. Strip `C#` from temp `config/features` and remove `[dotnet]` section with Git-for-Windows-compatible `sed`/`awk`. Do not build C# in the temp project; continue the existing GdUnit import/class-cache check.
-
-- [ ] **Step 2: Extract duplicated survivor scan**
-
-Create `assert_no_e2e_children.sh` supporting Linux `ps` + Windows PowerShell; fail on surviving `--gdunit-e2e` processes.
-
-- [ ] **Step 3: Add release-package contract**
-
-Verify archive includes C# `.gdignore`, client csproj, facade sources; excludes tests, `GodotE2E.csproj`/`.sln`, and GdUnit4.
-
-- [ ] **Step 4: Switch existing jobs to Godot .NET 4.5.1 + .NET 8**
-
-Keep current `GODOT_BIN` resolution.
-
-- [ ] **Step 5: Build root game before the first main-project Godot process**
-
-Run `dotnet build GodotE2E.csproj` before `scripts/bootstrap_gdunit4.sh`; then run GdUnit bootstrap and clean-bootstrap test.
-
-- [ ] **Step 6: Run both same-language paths in each job**
-
-Keep GDScript suite + intentional failure harness; add C# suite via Xvfb on Linux and plain `dotnet test` on Windows. No new matrix/job.
-
-- [ ] **Step 7: Add survivor/package gates and managed failure artifacts**
-
-Run survivor script with `if: always()` both jobs; Linux package gate; upload `TestResults` on failure.
-
-- [ ] **Step 8: Document C# game compile exclusion and RunAsync**
-
-Game `.csproj`:
-
-```xml
-<ItemGroup>
-  <Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />
-</ItemGroup>
-```
-
-Separate test project references `GodotE2E.Client.csproj` and pinned gdUnit4Net/Test SDK packages. README examples use `RunAsync`; no `[RequireGodotRuntime]`. Same-language support matrix only.
-
-- [ ] **Step 9: Run complete local release gate**
-
-```bash
-./scripts/bootstrap_gdunit4.sh
-dotnet list addons/gdunit_e2e/csharp/GodotE2E.Client.csproj package
-dotnet sln GodotE2E.sln list
-dotnet build GodotE2E.csproj
-bash tests/scripts/bootstrap_gdunit4_import_test.sh
-./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
-dotnet test tests/csharp/GodotE2E.Tests.csproj
-
-set +e
-./addons/gdUnit4/runtest.sh -a tests/fixtures/failure_harness_test.gd
-status=$?
-set -e
-test "$status" -eq 100
-
-bash tests/scripts/assert_no_e2e_children.sh
-bash tests/scripts/package_release_test.sh
-```
-
-Use Xvfb locally on Linux where needed.
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add .github/workflows/ci.yml README.md tests/scripts
-git commit -m "docs: ship csharp e2e integration path"
-```
+- [ ] **Step 1:** after clean archive extraction remove `GodotE2E.csproj/.sln`, C# repository tests/fixture; keep shipped addon C# client. Strip `C#` feature + `[dotnet]` from temp `project.godot`; do **not** C# build temp project; run existing import/class-cache check.
+- [ ] **Step 2:** extract Linux/Windows survivor scan script.
+- [ ] **Step 3:** package contract includes client `.gdignore`/csproj/facade; excludes root project/tests/GdUnit4.
+- [ ] **Step 4:** existing two jobs switch to Godot .NET 4.5.1 + .NET 8.
+- [ ] **Step 5:** `dotnet build GodotE2E.csproj` before main-project bootstrap script/any Godot launch.
+- [ ] **Step 6:** both same-language suites per existing OS job; no new matrix.
+- [ ] **Step 7:** survivor `always()`, Linux package gate, upload TestResults.
+- [ ] **Step 8:** README C# game csproj includes `<Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />`; separate test project references client + pinned gdUnit packages; examples use RunAsync; no RequireGodotRuntime or cross-language claim.
+- [ ] **Step 9:** complete local release gate.
+- [ ] **Step 10:** commit.
 
 ---
 
 ## Final PR Gate
 
-- [ ] `git diff main...HEAD --check` passes.
-- [ ] Existing GDScript public API was not refactored solely for C# reuse.
-- [ ] Client project has no package dependencies; test project does not reference game project.
-- [ ] No C# E2E test has `[RequireGodotRuntime]`.
-- [ ] Game csproj has no manual `<AssemblyName>` and excludes C# test/client source trees.
-- [ ] Solution contains only game project; C# UID committed.
+- [ ] `git diff main...HEAD --check`.
+- [ ] Existing GDScript API unchanged for code-sharing purposes.
+- [ ] Client has no package dependencies; C# tests do not reference game project.
+- [ ] No C# E2E `[RequireGodotRuntime]`.
+- [ ] No manual game `<AssemblyName>`; solution identity matches project.godot; UID committed.
+- [ ] Game compile excludes C# tests/client.
 - [ ] Same-language fixtures only.
-- [ ] Clean-bootstrap temp project strips C# game/test metadata but keeps shipped client directory.
-- [ ] Unsupported `_t` typed conversion throws; protocol/pipe constants have drift coverage.
-- [ ] C# stdout/stderr retention is bounded to 4 MiB per stream.
-- [ ] `RunAsync` preserves body failure when cleanup also fails and uses suite/test artifact path.
+- [ ] Clean-bootstrap strips C# game metadata/fixture but keeps shipped client directory.
+- [ ] Unsupported typed `_t` values fail loudly; duplicated constants have drift guard.
+- [ ] Pipe retention <=4 MiB per stream.
+- [ ] RunAsync preserves primary body failure and uses suite/test artifact paths.
 - [ ] README includes C# game compile exclusion.
-- [ ] Linux + Windows CI green on Godot .NET 4.5.1.
-- [ ] Release ZIP contains client and excludes root project/test files, GdUnit4, reports, test output.
-- [ ] No E2E child survives either supported path.
+- [ ] Linux/Windows CI green on Godot .NET 4.5.1.
+- [ ] Release package shape correct.
+- [ ] No surviving E2E child.
