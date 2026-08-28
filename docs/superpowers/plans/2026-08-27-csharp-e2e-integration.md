@@ -1230,17 +1230,17 @@ catch (ExpectedTestException)
 }
 ```
 
-Then assert exactly one new failure directory exists and contains:
+Then assert exactly one new failure directory exists. Because reachable diagnostics are best effort, require the deterministic files and validate reachable captures when present:
 
 ```text
-screenshot.png
-scene_tree.json
-engine_logs.json
-stdout.log
-stderr.log
+engine_logs.json must exist
+stdout.log must exist after disposal
+stderr.log must exist after disposal
+scene_tree.json should exist for a healthy connected fixture
+screenshot.png should exist when viewport capture succeeds in the current platform/display environment
 ```
 
-Also assert no child PID remains alive. This verifies the README path, not only explicit artifact capture.
+The Linux CI run is under Xvfb, so the integration gate should expect screenshot/tree capture there. Also assert no child remains alive. This verifies the README path, not only explicit artifact capture.
 
 - [ ] **Step 9: Add forced-kill regression using fixture behavior only**
 
@@ -1488,7 +1488,7 @@ State:
 
 ```text
 - normal C# E2E tests do not need [RequireGodotRuntime]
-- RunAsync captures screenshot/tree/logs before teardown when the body throws and appends stdout/stderr after exit
+- RunAsync best-effort captures screenshot/tree/logs before teardown when the body throws and appends stdout/stderr after exit
 - LaunchAsync + await using remains available for custom lifecycle/negative-path tests
 - automatic artifacts live under test_output/csharp/<timestamp>-<id>/
 ```
