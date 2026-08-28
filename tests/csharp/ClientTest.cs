@@ -317,12 +317,24 @@ public class ClientTest
     [TestCase]
     public void CommandTimeoutFor_WaitAndReloadCommandsAddMargin()
     {
+        // The explicit six-command set from gdunit_e2e_game.gd.
+        AssertThat(E2EClient.CommandTimeoutFor("wait_seconds"))
+            .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
+        AssertThat(E2EClient.CommandTimeoutFor("wait_for_node"))
+            .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
         AssertThat(E2EClient.CommandTimeoutFor("wait_for_property"))
             .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
         AssertThat(E2EClient.CommandTimeoutFor("wait_for_signal"))
             .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
+        AssertThat(E2EClient.CommandTimeoutFor("change_scene"))
+            .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
         AssertThat(E2EClient.CommandTimeoutFor("reload_scene"))
             .IsEqual(E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin);
+        // wait*_frames were wrongly margined by the old prefix rule.
+        AssertThat(E2EClient.CommandTimeoutFor("wait_process_frames"))
+            .IsEqual(E2EProtocol.DefaultCommandTimeout);
+        AssertThat(E2EClient.CommandTimeoutFor("wait_physics_frames"))
+            .IsEqual(E2EProtocol.DefaultCommandTimeout);
         AssertThat(E2EClient.CommandTimeoutFor("get_property"))
             .IsEqual(E2EProtocol.DefaultCommandTimeout);
         AssertThat(E2EClient.CommandTimeoutFor("screenshot"))

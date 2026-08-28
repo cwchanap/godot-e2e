@@ -34,11 +34,13 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
     private int _disposed;
 
     /// <summary>
-    /// Effective transport timeout for a command: wait/reload commands get the
-    /// extra <see cref="E2EProtocol.WaitMargin"/> on top of the default.
+    /// Effective transport timeout for a command: the six commands the
+    /// GDScript parent (<c>gdunit_e2e_game.gd</c>) margins get the extra
+    /// <see cref="E2EProtocol.WaitMargin"/> on top of the default.
     /// </summary>
     public static TimeSpan CommandTimeoutFor(string action) =>
-        action.StartsWith("wait", StringComparison.Ordinal) || action == "reload_scene"
+        action is "wait_seconds" or "wait_for_node" or "wait_for_property"
+            or "wait_for_signal" or "change_scene" or "reload_scene"
             ? E2EProtocol.DefaultCommandTimeout + E2EProtocol.WaitMargin
             : E2EProtocol.DefaultCommandTimeout;
 
@@ -89,16 +91,19 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
         return result;
     }
 
-    public Task<E2EResult> SendCommandAsync(
+    public async Task<E2EResult> SendCommandAsync(
         string action,
         IReadOnlyDictionary<string, JsonElement>? parameters = null,
         TimeSpan timeout = default,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var gate = AcquireInFlightOrThrow();
         var effective = timeout == default ? CommandTimeoutFor(action) : timeout;
-        return SendCoreAsync(action, parameters, effective, cancellationToken, gate);
+        // using, like ConnectAsync: SendCoreAsync can throw before its own try
+        // (e.g. CreateLinkedTokenSource on a disposed caller token); release is
+        // idempotent with the gate's own Interlocked.
+        using var gate = AcquireInFlightOrThrow();
+        return await SendCoreAsync(action, parameters, effective, cancellationToken, gate);
     }
 
     private async Task<E2EResult> SendCoreAsync(
