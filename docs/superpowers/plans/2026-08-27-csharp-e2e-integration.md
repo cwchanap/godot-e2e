@@ -461,8 +461,8 @@ This makes ordinary integration launches inherit `E2ELaunchOptions.timeout_secon
 
 ```bash
 grep -q '<AssemblyName>GodotE2E</AssemblyName>' godot-e2e.csproj
-grep -q '<Compile Remove="tests/csharp/\*\*/\*.cs" />' godot-e2e.csproj
-grep -q '<Compile Remove="addons/gdunit_e2e/csharp/\*\*/\*.cs" />' godot-e2e.csproj
+grep -Fq '<Compile Remove="tests/csharp/**/*.cs" />' godot-e2e.csproj
+grep -Fq '<Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />' godot-e2e.csproj
 test "$(dotnet sln godot-e2e.sln list | grep -c '\.csproj$')" -eq 1
 dotnet sln godot-e2e.sln list | grep -q '^godot-e2e.csproj$'
 dotnet build godot-e2e.csproj
@@ -1023,7 +1023,7 @@ Do not expose the test seam as public API. The non-owning test instance has no p
 
 - [ ] **Step 2: Write the RED wait-margin unit test**
 
-Create `tests/csharp/GameApiTest.cs` with a recording sender:
+Create `tests/csharp/GameApiTest.cs` with a recording sender. Return the response shape each wrapper actually consumes so the test fails only on timeout forwarding:
 
 ```csharp
 private sealed class RecordingSender : IE2ECommandSender
@@ -1039,8 +1039,10 @@ private sealed class RecordingSender : IE2ECommandSender
         Calls.Add((action, timeout));
         var response = action switch
         {
+            "wait_for_property" => JsonSerializer.SerializeToElement(new { id = 1, ok = true }),
             "wait_for_signal" => JsonSerializer.SerializeToElement(new { id = 1, result = Array.Empty<object>() }),
-            _ => JsonSerializer.SerializeToElement(new { id = 1, ok = true }),
+            "reload_scene" => JsonSerializer.SerializeToElement(new { id = 1, ok = true }),
+            _ => throw new InvalidOperationException($"Unexpected action: {action}"),
         };
         return Task.FromResult(new E2EResult(true, response, "", Array.Empty<JsonElement>()));
     }
@@ -1136,7 +1138,7 @@ get_scene         -> response.scene
 input_action      -> success only
 press_action      -> input_action pressed=true then pressed=false
 click_node        -> success only
-wait_for_property -> server timeout in seconds; transport timeout = timeout + 1s
+wait_for_property -> server timeout in seconds; transport timeout = timeout + 1s; return true on success
 wait_for_signal   -> same margin; response.result or response.args
 reload_scene      -> default command timeout + 1s
 screenshot        -> response.path
