@@ -61,6 +61,12 @@ public sealed class E2EProcess : IAsyncDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (string.IsNullOrEmpty(options.ScenePath))
             throw new E2EException("E2ELaunchOptions.ScenePath is required");
+        // e2e_process.gd closes a live instance before relaunching; our
+        // shutdown is terminal (DisposeAsync), so a relaunch of a live
+        // instance fails loud instead of orphaning the first child.
+        if (_child is not null || _client is not null)
+            throw new E2EException(
+                "E2EProcess already owns a launched child; dispose it before launching again");
 
         var projectPath = ResolveProjectPath(options.ProjectPath);
         var godotPath = ResolveGodotPath(options.GodotPath);
@@ -81,7 +87,7 @@ public sealed class E2EProcess : IAsyncDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            foreach (var argument in BuildArguments(options, _portFile, token))
+            foreach (var argument in BuildArguments(options, projectPath, _portFile, token))
                 startInfo.ArgumentList.Add(argument);
 
             _child = Process.Start(startInfo);
@@ -144,12 +150,13 @@ public sealed class E2EProcess : IAsyncDisposable
         return await client.SendCommandAsync(action, parameters, timeout, cancellationToken);
     }
 
-    internal static List<string> BuildArguments(E2ELaunchOptions options, string portFile, string token)
+    internal static List<string> BuildArguments(
+        E2ELaunchOptions options, string projectPath, string portFile, string token)
     {
         var args = new List<string>
         {
             "--path",
-            options.ProjectPath ?? "",
+            projectPath,
             "--scene",
             options.BootstrapScenePath,
         };

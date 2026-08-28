@@ -21,7 +21,7 @@ public class ProcessTest
             ExtraGodotArgs = ["--verbose"],
         };
 
-        var args = E2EProcess.BuildArguments(options, "/tmp/port.txt", "tok");
+        var args = E2EProcess.BuildArguments(options, "/tmp/proj", "/tmp/port.txt", "tok");
 
         var expected = new[]
         {
@@ -46,9 +46,23 @@ public class ProcessTest
     {
         var options = new E2ELaunchOptions { ScenePath = "res://scene.tscn" };
 
-        var args = E2EProcess.BuildArguments(options, "/tmp/port.txt", "tok");
+        var args = E2EProcess.BuildArguments(
+            options, E2EProcess.ResolveProjectPath(options.ProjectPath), "/tmp/port.txt", "tok");
 
         AssertThat(args).Contains("--gdunit-e2e-port=0");
+    }
+
+    [TestCase]
+    public void BuildArguments_DefaultOptionsCarryResolvedProjectPath()
+    {
+        // Regression: the resolved project path must drive --path; under
+        // default options the child used to get an empty --path value.
+        var options = new E2ELaunchOptions { ScenePath = "res://scene.tscn" };
+
+        var args = E2EProcess.BuildArguments(
+            options, E2EProcess.ResolveProjectPath(options.ProjectPath), "/tmp/port.txt", "tok");
+
+        AssertThat(args[args.IndexOf("--path") + 1]).IsEqual(TestPaths.RepositoryRoot);
     }
 
     // ---- launch option defaults (mirrors e2e_launch_options.gd) ----

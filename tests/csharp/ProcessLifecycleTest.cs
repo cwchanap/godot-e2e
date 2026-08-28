@@ -102,6 +102,30 @@ public class ProcessLifecycleTest
         AssertNoSurvivor(game);
     }
 
+    [TestCase]
+    public async Task RelaunchOfLiveInstance_ThrowsAndKeepsFirstChild()
+    {
+        var process = new E2EProcess();
+        await process.LaunchAsync(TestProject.CreateOptions());
+        try
+        {
+            var firstPid = process.Pid;
+
+            var error = await CatchAsync(() => process.LaunchAsync(TestProject.CreateOptions()));
+
+            // The guard fires before any second child is started and the
+            // first child is neither orphaned nor replaced.
+            AssertThat(error).IsInstanceOf<E2EException>();
+            AssertThat(process.Pid).IsEqual(firstPid);
+            AssertThat(process.HasExited).IsFalse();
+        }
+        finally
+        {
+            await process.DisposeAsync();
+        }
+        AssertThat(process.HasExited).IsTrue();
+    }
+
     // ---- helpers ----
 
     private static async Task<Exception?> CatchAsync(Func<Task> action)

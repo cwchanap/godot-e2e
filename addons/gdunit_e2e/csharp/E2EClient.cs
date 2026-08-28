@@ -178,22 +178,25 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             throw new E2EException("Invalid response message");
 
         bool hasId = response.TryGetProperty("id", out var idElement);
+        bool hasError = response.TryGetProperty("error", out _);
         // e2e_client.gd: a response without "id" is accepted only when it
-        // carries an "error"; anything else is an id mismatch.
+        // carries an "error" (the real server answers invalid_json without an
+        // id); anything else is an id mismatch.
         // Godot's JSON round-trips integer ids as floats ("id":1.0), and the
         // GDScript parent's == compares numerically; GetDouble matches that.
-        var matches = hasId
+        var matches = (hasId
             && idElement.ValueKind == JsonValueKind.Number
-            && idElement.GetDouble() == commandId;
+            && idElement.GetDouble() == commandId)
+            || (!hasId && hasError);
         if (!matches)
             throw new E2EException(
                 $"Unexpected response id {(hasId ? idElement.ToString() : "<null>")} for '{action}'");
 
         return new E2EResult
         {
-            Success = !response.TryGetProperty("error", out _),
+            Success = !hasError,
             Value = CloneWithoutLogKeys(response),
-            Message = response.TryGetProperty("error", out _) ? RenderError(response) : string.Empty,
+            Message = hasError ? RenderError(response) : string.Empty,
             Logs = ExtractLogs(response),
         };
     }
