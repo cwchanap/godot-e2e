@@ -103,7 +103,7 @@ The GDScript parent cannot be cleanly reused from a normal VSTest process:
 - `GdUnitE2EGame` maps failures into `suite.fail()`;
 - `GdUnitE2ETestSuite` owns GdUnit-specific failure state and teardown.
 
-Calling these objects dynamically from C# would keep those dependencies and add cross-language lifecycle complexity. The duplicate implementation is intentionally limited to the parent transport/process boundary.
+Calling these objects dynamically from C# would keep those dependencies and add cross-language lifecycle complexity. The C# implementation therefore reuses the wire contract and child runtime, not the GDScript parent implementation.
 
 ## 6. Repository layout
 
@@ -147,6 +147,8 @@ Calling these objects dynamically from C# would keep those dependencies and add 
     ├── FakeProtocolServer.cs
     └── TestProject.cs
 ```
+
+The exact C# test-file split may stay smaller if responsibilities remain clear. Do not create one class/file per protocol command.
 
 `.gdignore` keeps the pure managed test client out of Godot's resource scan. MSBuild ignores `.gdignore`, so C# Godot projects still need the compile exclusion described below.
 
@@ -192,6 +194,8 @@ Do **not** set `<AssemblyName>` manually in the `.csproj`. Godot 4.5 has a known
 </Project>
 ```
 
+The root game project compiles the C# fixture but does **not** compile either the gdUnit4Net test harness or the addon client library.
+
 The solution contains only this game project. The gdUnit4Net test project remains outside it.
 
 After the first Godot .NET import, commit `tests/fixtures/csharp/Main.cs.uid`. `.godot/**` remains ignored.
@@ -208,7 +212,7 @@ Document this consumer rule in the C# installation steps:
 </ItemGroup>
 ```
 
-This avoids compiling the test transport into the shipped game assembly. The separate test project compiles/references the client library once through `GodotE2E.Client.csproj`.
+This avoids compiling the test transport into the shipped game assembly. The separate test project compiles/references the client library through `GodotE2E.Client.csproj`.
 
 GDScript consumers do not modify a `.csproj`.
 
