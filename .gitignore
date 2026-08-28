@@ -4,3 +4,7 @@ reports/
 test_output/
 dist/
 *.tmp
+
+bin/
+obj/
+TestResults/
