@@ -180,9 +180,11 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
         bool hasId = response.TryGetProperty("id", out var idElement);
         // e2e_client.gd: a response without "id" is accepted only when it
         // carries an "error"; anything else is an id mismatch.
+        // Godot's JSON round-trips integer ids as floats ("id":1.0), and the
+        // GDScript parent's == compares numerically; GetDouble matches that.
         var matches = hasId
-            ? idElement.ValueKind == JsonValueKind.Number && idElement.GetInt32() == commandId
-            : response.TryGetProperty("error", out _);
+            && idElement.ValueKind == JsonValueKind.Number
+            && idElement.GetDouble() == commandId;
         if (!matches)
             throw new E2EException(
                 $"Unexpected response id {(hasId ? idElement.ToString() : "<null>")} for '{action}'");
@@ -224,10 +226,11 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
 
         if (response.TryGetProperty("_logs_dropped", out var dropped)
             && dropped.ValueKind == JsonValueKind.Number
-            && dropped.GetInt32() > 0)
+            && dropped.GetDouble() > 0)
         {
+            var droppedCount = (int)dropped.GetDouble();
             entries.Add(JsonDocument.Parse(
-                $"{{\"level\":\"warning\",\"message\":\"<{dropped.GetInt32()}> log entries dropped due to capture buffer overflow\"}}").RootElement.Clone());
+                $"{{\"level\":\"warning\",\"message\":\"<{droppedCount}> log entries dropped due to capture buffer overflow\"}}").RootElement.Clone());
         }
 
         return entries;
