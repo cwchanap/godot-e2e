@@ -1002,7 +1002,7 @@ internal interface IE2ECommandSender
 }
 ```
 
-`E2EClient` implements it. `E2EGame` gets an internal test-only constructor accepting `IE2ECommandSender`; production construction still comes from `E2EProcess`.
+`E2EClient` implements it. `E2EGame` gets an internal non-owning test constructor accepting `IE2ECommandSender`; production construction still owns an `E2EProcess`.
 
 Create `addons/gdunit_e2e/csharp/AssemblyInfo.cs`:
 
@@ -1012,7 +1012,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("GodotE2E.Tests")]
 ```
 
-Do not expose the test seam as public API.
+Do not expose the test seam as public API. The non-owning test instance has no process to dispose; `DisposeAsync()` is a no-op for it.
 
 - [ ] **Step 2: Write the RED wait-margin unit test**
 
@@ -1479,12 +1479,12 @@ State:
 
 Remove the old deferred item that says dedicated C#/.NET support is not included.
 
-- [ ] **Step 9: Run the complete local release gate**
+- [ ] **Step 9: Run the complete local release gate in the same safe order**
 
 ```bash
+dotnet build godot-e2e.csproj
 ./scripts/bootstrap_gdunit4.sh
 dotnet list addons/gdunit_e2e/csharp/GodotE2E.Client.csproj package
-dotnet build godot-e2e.csproj
 ./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
 dotnet test tests/csharp/GodotE2E.Tests.csproj
 
@@ -1498,7 +1498,7 @@ bash tests/scripts/assert_no_e2e_children.sh
 bash tests/scripts/package_release_test.sh
 ```
 
-On Linux without a display, wrap child-launching commands in the same Xvfb invocation used by CI.
+If `GODOT_BIN` is set, keep `dotnet build godot-e2e.csproj` before `bootstrap_gdunit4.sh` because bootstrap itself launches Godot. On Linux without a display, wrap child-launching commands in the same Xvfb invocation used by CI.
 
 Expected:
 
