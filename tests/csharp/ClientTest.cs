@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using GdUnit4;
 using static GdUnit4.Assertions;
@@ -275,6 +276,37 @@ public class ClientTest
         AssertThat(error!.Message).IsEqual("Unexpected response id 99 for 'mismatch'");
         var closed = await CatchAsync(() => client.SendCommandAsync("next"));
         AssertThat(closed!.Message).IsEqual("E2E session is not open");
+    }
+
+    [TestCase]
+    public async Task Command_IdLessResponseWithErrorSurfacesServerError()
+    {
+        // The real server answers invalid_json with a genuinely id-less error
+        // frame; e2e_client.gd accepts it and surfaces the rendered error.
+        await using var fake = FakeProtocolServer.Start(EchoOnly);
+        await using var client = new E2EClient();
+        await client.ConnectAsync(fake.Port, "t");
+        fake.RawNextResponse = Encoding.UTF8.GetBytes(
+        """{"error":"invalid_json","message":"Could not parse JSON"}""");
+
+        var result = await client.SendCommandAsync("ping");
+
+        AssertThat(result.Success).IsFalse();
+        AssertThat(result.Message).IsEqual("invalid_json: Could not parse JSON");
+    }
+
+    [TestCase]
+    public async Task Command_IdLessResponseWithoutErrorIsIdMismatch()
+    {
+        await using var fake = FakeProtocolServer.Start(EchoOnly);
+        await using var client = new E2EClient();
+        await client.ConnectAsync(fake.Port, "t");
+        fake.RawNextResponse = Encoding.UTF8.GetBytes("""{"ok":true}""");
+
+        var error = await CatchAsync(() => client.SendCommandAsync("ping"));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual("Unexpected response id <null> for 'ping'");
     }
 
     // ---- One in-flight command, fail fast ----

@@ -37,6 +37,10 @@ internal sealed class FakeProtocolServer : IAsyncDisposable
     /// </summary>
     public Func<JsonElement, Task<JsonElement?>>? Responder { get; set; }
 
+    /// <summary>Raw bytes sent verbatim as the next response frame, bypassing
+    /// the automatic id injection (for genuinely id-less server frames).</summary>
+    public byte[]? RawNextResponse { get; set; }
+
     public static FakeProtocolServer Start(
         Func<JsonElement, Task<JsonElement?>>? responder = null)
     {
@@ -107,7 +111,9 @@ internal sealed class FakeProtocolServer : IAsyncDisposable
             if (response is null)
                 continue;
 
-            var payload = SerializeWithId(response.Value, command);
+            var raw = RawNextResponse;
+            RawNextResponse = null;
+            var payload = raw ?? SerializeWithId(response.Value, command);
             if (trickle)
                 await WriteTrickledAsync(stream, payload, ct);
             else
