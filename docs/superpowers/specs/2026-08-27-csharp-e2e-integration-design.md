@@ -18,45 +18,43 @@ The supported language matrix is deliberately narrow:
 | GDScript | C# | Not supported or tested |
 | C# | GDScript | Not supported or tested |
 
-C# tests run through gdUnit4Net/VSTest as ordinary async .NET tests. They launch the same Godot project as a separate **Godot .NET** child process and drive it over the existing authenticated localhost protocol.
+C# tests run through gdUnit4Net/VSTest as ordinary async .NET tests. They launch the repository Godot project as a separate **Godot .NET** child and drive it over the existing authenticated localhost protocol.
 
-The child continues to use the existing addon-owned GDScript bootstrap, automation server, command handler, protocol framing, serializer contract, diagnostics, and orphan watchdog. C# only adds a second parent-side client/process facade.
+The child continues to use the addon-owned GDScript bootstrap, automation server, command handler, serializer, diagnostics, and orphan watchdog. C# adds only a second parent-side client/process facade.
 
-This document amends the base design only for C# support. Existing GDScript contracts remain authoritative unless explicitly changed here.
+Existing GDScript contracts remain authoritative unless this document explicitly amends them.
 
 ## 2. Goals
 
 The C# integration must:
 
 1. Let a C# gdUnit4Net test launch a separate Godot .NET child process for the same project.
-2. Let that test drive a C# game scene through the existing protocol v1 command surface.
+2. Let that test drive a C# game scene through protocol v1.
 3. Keep `GDScript test -> GDScript game` unchanged.
-4. Reuse the existing GDScript child bootstrap and automation server.
-5. Keep the C# transport/process library independent of gdUnit4Net internals and independent of GodotSharp.
-6. Use idiomatic .NET async APIs and deterministic `IAsyncDisposable` cleanup.
-7. Provide a small `RunAsync` helper that captures diagnostics when a normal C# test body throws.
-8. Preserve the existing localhost-only token handshake, frame cap, serializer tags, command names, response shapes, wait margins, and child orphan watchdog.
-9. Validate C# child launch and cleanup on Linux and Windows CI.
-10. Ship the C# client with the same addon/release artifact.
-11. Deliver design, plan, implementation, tests, CI, and documentation in one feature PR.
+4. Reuse the existing GDScript child bootstrap/server.
+5. Keep `GodotE2E.Client` independent of GodotSharp and gdUnit4Net.
+6. Use idiomatic .NET async APIs with deterministic child cleanup.
+7. Provide `RunAsync` as the normal C# test lifecycle so thrown test-body/assertion failures capture diagnostics before teardown.
+8. Preserve protocol framing, token pairing, response shapes, log behavior, wait margins, frame limits, and orphan cleanup.
+9. Keep child stdout/stderr continuously drained and bounded to the same 4 MiB diagnostic tail as the GDScript parent.
+10. Validate both supported same-language paths on Linux and Windows.
+11. Ship the C# client in the existing single addon archive.
+12. Deliver design, plan, implementation, tests, CI, and docs in one feature PR.
 
 ## 3. Non-goals
 
 This change will not:
 
-- support or test GDScript tests against C# game scenes;
-- support or test C# tests against GDScript game scenes;
-- port the automation server, command handler, bootstrap, or protocol implementation to C#;
-- create protocol v2 or alter protocol v1;
-- replace gdUnit4Net discovery, assertions, VSTest integration, or reporting;
-- add a C# suite base class or custom test runner;
+- support or test either cross-language combination;
+- port the automation server, bootstrap, command handler, or protocol to C#;
+- create protocol v2;
+- add a C# suite base class or custom runner;
 - require `[RequireGodotRuntime]` for normal C# E2E tests;
-- publish a NuGet package in the first C# release;
-- add a generic RPC framework or generated protocol bindings;
-- add parallel requests, simultaneous sessions, a process pool, or suite-level child reuse;
-- add a second CI OS/version matrix;
-- guarantee renamed-addon-directory auto-discovery from the C# launcher in the first release;
-- inspect internal gdUnit4Net runner state or use reflection to detect failures.
+- publish a NuGet package;
+- add locators, retrying expectations, generated bindings, a generic RPC layer, pools, process reuse, parallel sessions, or a new CI matrix;
+- guarantee renamed-addon-directory auto-discovery in the first C# release;
+- use gdUnit4Net internals/reflection to inspect framework failure state;
+- recreate the full Godot Variant type system.
 
 ## 4. Architecture
 
@@ -76,7 +74,7 @@ GDScript GdUnit4 test
             └── GDScript game scene
 ```
 
-No C# work should refactor this path merely to share parent-side code.
+No C# work refactors this path merely to share parent implementation.
 
 ### 4.2 New C# path
 
@@ -94,34 +92,33 @@ C# gdUnit4Net / VSTest process
         └── C# game scene/scripts
 ```
 
-The C# parent does not need to be a Godot process. It uses standard .NET process, socket, JSON, file, and timing APIs. The separate Godot child remains the runtime under test.
+The C# parent is a normal .NET process. It uses `System.Diagnostics.Process`, `System.Net.Sockets`, `System.Text.Json`, files, and timers. The separate Godot process is the runtime under test.
 
 ## 5. Why the C# parent is separate
 
-The existing GDScript parent is intentionally tied to GdUnit4 and the SceneTree:
+The GDScript parent cannot be cleanly reused from a normal VSTest process:
 
-- `E2EProcess` owns a `GdUnitTestSuite` and uses its temp-directory and await helpers;
-- `E2EClient` is a SceneTree `Node` because it polls from `_process()`;
-- `GdUnitE2EGame` maps remote failures into the suite's `fail()` state;
-- `GdUnitE2ETestSuite` owns automatic teardown and failure-artifact policy.
+- `E2EProcess` is a SceneTree `Node`, owns a `GdUnitTestSuite`, and uses GdUnit lifecycle helpers;
+- `E2EClient` is a SceneTree `Node` that polls from `_process()`;
+- `GdUnitE2EGame` maps failures into `suite.fail()`;
+- `GdUnitE2ETestSuite` owns GdUnit-specific failure state and teardown.
 
-Calling those classes dynamically from C# would preserve those dependencies while adding cross-language async/lifecycle complexity. The C# implementation therefore reuses the **wire contract and child runtime**, not the GDScript parent implementation.
-
-The duplicated code is limited to the parent transport/process boundary where .NET and GDScript have materially different runtime primitives.
+Calling these objects dynamically from C# would keep those dependencies and add cross-language lifecycle complexity. The duplicate implementation is intentionally limited to the parent transport/process boundary.
 
 ## 6. Repository layout
 
 ```text
 .
 ├── project.godot
-├── godot-e2e.csproj
-├── godot-e2e.sln
+├── GodotE2E.csproj
+├── GodotE2E.sln
 ├── addons/gdunit_e2e/
 │   ├── client/                         # existing GDScript parent
 │   ├── protocol/                       # existing wire contract
 │   ├── runtime/                        # existing child bootstrap
 │   ├── server/                         # existing child server
 │   └── csharp/
+│       ├── .gdignore
 │       ├── GodotE2E.Client.csproj
 │       ├── E2EProtocol.cs
 │       ├── E2EFraming.cs
@@ -140,6 +137,7 @@ The duplicated code is limited to the parent transport/process boundary where .N
 │   └── main.tscn
 └── tests/csharp/
     ├── GodotE2E.Tests.csproj
+    ├── TestPaths.cs
     ├── RunnerSmokeTest.cs
     ├── ProtocolTest.cs
     ├── ClientTest.cs
@@ -150,15 +148,15 @@ The duplicated code is limited to the parent transport/process boundary where .N
     └── TestProject.cs
 ```
 
-The exact C# test-file split may stay smaller if responsibilities remain clear. Do not create one class/file per protocol command.
+`.gdignore` keeps the pure managed test client out of Godot's resource scan. MSBuild ignores `.gdignore`, so C# Godot projects still need the compile exclusion described below.
 
 ## 7. Godot .NET project contract
 
-Adding a C# fixture turns the repository itself into a Godot .NET project. The repository contract therefore includes more than a root `.csproj`.
+Adding a C# fixture turns this repository into a Godot .NET project.
 
-### 7.1 `project.godot`
+### 7.1 Godot project metadata
 
-Keep the existing GL Compatibility renderer and add the normal Godot C# project metadata:
+`project.godot` keeps GL Compatibility and declares the normal C# project metadata:
 
 ```ini
 [application]
@@ -171,11 +169,13 @@ config/features=PackedStringArray("4.5", "C#", "GL Compatibility")
 project/assembly_name="GodotE2E"
 ```
 
-The `C#` feature records that the project requires C# support; a standard non-.NET Godot build reports it as an unsupported project feature. Existing GDScript integration children therefore use the Godot .NET executable after this change because the repository project now includes a C# fixture/assembly.
+Use `GodotE2E.csproj` and `GodotE2E.sln` so the file/project identity matches `dotnet/project/assembly_name`.
+
+Do **not** set `<AssemblyName>` manually in the `.csproj`. Godot 4.5 has a known engine bug where overriding `<AssemblyName>` can break C# script type resolution. The project filename/default assembly identity and `project/assembly_name` stay aligned instead.
 
 ### 7.2 Root game project
 
-`godot-e2e.csproj` uses `Godot.NET.Sdk/4.5.1`, targets `net8.0`, and uses a hyphen-free assembly name:
+`GodotE2E.csproj` uses `Godot.NET.Sdk/4.5.1`, targets `net8.0`, compiles the repository C# fixture, and excludes both the test harness and pure E2E client:
 
 ```xml
 <Project Sdk="Godot.NET.Sdk/4.5.1">
@@ -183,7 +183,6 @@ The `C#` feature records that the project requires C# support; a standard non-.N
     <TargetFramework>net8.0</TargetFramework>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <Nullable>enable</Nullable>
-    <AssemblyName>GodotE2E</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -193,31 +192,31 @@ The `C#` feature records that the project requires C# support; a standard non-.N
 </Project>
 ```
 
-The root game project compiles the C# fixture but does **not** compile either the gdUnit4Net test harness or the addon client library. This keeps the repository fixture assembly focused and avoids pulling test-runner/client implementation into the game-under-test assembly.
+The solution contains only this game project. The gdUnit4Net test project remains outside it.
 
-This exclusion is repository-specific. A consumer Godot .NET project may compile the BCL-only addon client `.cs` files normally; it does not need to copy this repository's exclusion rule.
+After the first Godot .NET import, commit `tests/fixtures/csharp/Main.cs.uid`. `.godot/**` remains ignored.
 
-### 7.3 Solution and UID files
+### 7.3 Consumer C# compile boundary
 
-Commit `godot-e2e.sln` containing only `godot-e2e.csproj`; do not add `GodotE2E.Tests.csproj` to that solution.
+A Godot .NET consumer that installs `addons/gdunit_e2e` must keep the BCL client out of the game assembly while its test project references `GodotE2E.Client.csproj`.
 
-After the first Godot .NET import, commit the generated `tests/fixtures/csharp/Main.cs.uid`. The fixture scene must point at the C# script through its stable resource identity after import.
+Document this consumer rule in the C# installation steps:
 
-Everything under `.godot/` remains ignored.
+```xml
+<ItemGroup>
+  <Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />
+</ItemGroup>
+```
+
+This avoids compiling the test transport into the shipped game assembly. The separate test project compiles/references the client library once through `GodotE2E.Client.csproj`.
+
+GDScript consumers do not modify a `.csproj`.
 
 ## 8. C# test-runner boundary
 
-`addons/gdunit_e2e/csharp/GodotE2E.Client.csproj` targets `net8.0` and has no dependency on:
+`GodotE2E.Client.csproj` targets `net8.0` and has no dependency on GodotSharp, gdUnit4Net, or third-party networking/JSON packages.
 
-- GodotSharp;
-- gdUnit4Net;
-- GdUnit4 GDScript;
-- third-party networking packages;
-- third-party JSON packages.
-
-It uses only the .NET BCL.
-
-Repository tests use these pinned packages in `tests/csharp/GodotE2E.Tests.csproj`:
+Repository tests pin:
 
 ```text
 gdUnit4.api              5.0.0
@@ -226,9 +225,9 @@ gdUnit4.analyzers        1.0.0
 Microsoft.NET.Test.Sdk  17.14.1
 ```
 
-The test project references `GodotE2E.Client.csproj` but does not reference `godot-e2e.csproj`. `gdUnit4.api` may bring GodotSharp transitively into the **test** project; that dependency stays isolated from the Godot 4.5.1 game project.
+The test project references `GodotE2E.Client.csproj` but never references `GodotE2E.csproj`. Any GodotSharp dependency pulled transitively by gdUnit4Net stays isolated in the test project.
 
-Normal E2E tests do not use `[RequireGodotRuntime]` because they do not instantiate Godot objects in the VSTest parent process.
+Normal E2E tests do not use `[RequireGodotRuntime]`.
 
 ## 9. Public C# API
 
@@ -249,32 +248,23 @@ BootstrapScenePath
 
 Defaults:
 
-- `ScenePath`: required for public C# launch;
-- `ProjectPath`: walk upward for `project.godot` from current/base directory when omitted;
-- `GodotPath`: `GODOT_BIN` when set, otherwise `godot` resolved by the OS `PATH`;
+- `ScenePath`: required;
+- `ProjectPath`: locate `project.godot` upward from current/base directory when omitted;
+- `GodotPath`: `GODOT_BIN`, otherwise `godot` resolved from `PATH`;
 - `Timeout`: 10 seconds;
 - `LogVerbosity`: `warning`;
 - `ServerPort`: `0`;
 - `BootstrapScenePath`: `res://addons/gdunit_e2e/runtime/bootstrap.tscn`.
 
-The bootstrap path is overridable. Automatic renamed-addon discovery is deferred.
+Automatic renamed-addon discovery is deferred.
 
 ### 9.2 `E2EResult`
 
-Raw commands expose the existing response rather than inventing a new error taxonomy:
+Raw commands return the existing response as a cloned `JsonElement` plus `Success`, `Message`, and response logs. Presence of protocol `error` means failure; no parallel C# error taxonomy is introduced.
 
-```text
-Success
-Response (cloned JsonElement)
-Message
-Logs
-```
+### 9.3 Lean `E2EGame` convenience surface
 
-Presence of the existing protocol `error` field means failure.
-
-### 9.3 `E2EGame` convenience surface
-
-Keep the first wrapper set to operations exercised by the C# acceptance tests:
+The first wrapper set is limited to operations exercised by acceptance tests:
 
 Inspection:
 
@@ -302,249 +292,250 @@ Scene/diagnostic:
 - `CaptureFailureArtifactsAsync`
 - raw `SendCommandAsync`
 
-Do **not** add convenience wrappers in this release for `get_tree`, key/mouse-button input, frame/seconds waits, `wait_for_node`, or `change_scene`. Those existing server commands remain available through `SendCommandAsync()` and can receive wrappers when real C# call sites need them.
+Do not add wrappers in this release for `get_tree`, key/mouse-button input, frame/seconds waits, `wait_for_node`, or `change_scene`. Those commands remain reachable through `SendCommandAsync()`.
 
 ### 9.4 Failure-capturing `RunAsync`
 
-Normal first-party tests and README examples use:
+Normal first-party tests and README examples use `RunAsync`, while `LaunchAsync` remains public for low-level/lifecycle tests:
 
 ```csharp
 public static Task RunAsync(
     E2ELaunchOptions options,
     Func<E2EGame, CancellationToken, Task> body,
-    CancellationToken cancellationToken = default)
+    CancellationToken cancellationToken = default,
+    [CallerMemberName] string testName = "",
+    [CallerFilePath] string callerFilePath = "")
 ```
+
+The default failure directory is derived without call-site boilerplate:
+
+```text
+<resolved project>/test_output/csharp/<caller-file-name>/<testName>/
+```
+
+For first-party tests, caller file names match suite/class names, yielding the same useful `<suite>/<test>` shape as the GDScript path.
 
 Behavior:
 
 ```text
 LaunchAsync
-→ execute body
-→ if body throws:
-     best-effort CaptureFailureArtifactsAsync while child is reachable
-→ DisposeAsync in finally
-→ after child exit, append stdout/stderr to the same artifact directory when failure capture started
-→ rethrow the test/body exception (normal finally/disposal exception semantics apply if cleanup itself fails)
+→ run body
+→ on body exception:
+     best-effort capture screenshot/tree/logs while child is reachable
+→ attempt DisposeAsync
+→ append bounded stdout/stderr after exit when available
+→ if only cleanup failed: throw cleanup error
+→ if body failed: preserve/rethrow the original body exception
+     and attach/report cleanup failure as secondary diagnostic if cleanup also failed
 ```
 
-Default automatic C# failure artifacts go under:
-
-```text
-test_output/csharp/<timestamp>-<short-guid>/
-```
-
-`LaunchAsync()` and explicit `CaptureFailureArtifactsAsync(outputDirectory)` remain public primitives for lifecycle tests and deliberately handled negative paths.
-
-This helper provides failure diagnostics without a C# suite base class and without coupling the client to gdUnit4Net internals.
+`RunAsync` must not let a cleanup exception replace an already-propagating assertion/test-body exception. If both fail, attach cleanup details to the body exception diagnostics and write them to stderr/artifacts, then rethrow the original exception with its original stack.
 
 ## 10. Failure model
 
-Wrapped remote-operation failures throw `E2EException`. gdUnit4Net/VSTest reports that exception as a failed test.
+Wrapped remote failures throw `E2EException`. Raw `SendCommandAsync()` returns `E2EResult` for expected negative paths.
 
-`SendCommandAsync()` returns `E2EResult` without throwing for expected server/protocol negative paths.
+Artifact capture is best effort and cannot replace the primary failure.
 
-`RunAsync()` catches ordinary test-body exceptions only to collect diagnostics before teardown, then rethrows. It does not inspect assertion-framework state.
+`DisposeAsync()` remains strict when called on a success path: failure to confirm owned child death throws `E2EException`. `RunAsync` preserves an earlier body failure as primary when teardown also reports a failure.
 
-Artifact capture inside that catch is itself best effort: failures from screenshot/tree/log collection are swallowed so the original test-body exception remains the primary failure. Cleanup still runs in `finally`; standard C# `finally` semantics apply if `DisposeAsync()` itself cannot confirm child death.
+## 11. Process ownership, pipes, and cleanup
 
-## 11. Process ownership and cleanup
-
-`E2EGame` implements `IAsyncDisposable` and owns one `E2EProcess` in production. An internal non-owning command-sender constructor exists only for facade unit tests and has no process to dispose.
+`E2EGame` owns one `E2EProcess`; `E2EProcess` owns one `System.Diagnostics.Process` and one `E2EClient`.
 
 Launch:
 
 ```text
 resolve project + Godot executable
-→ create token and temp port-file path
+→ create token and temp port file
 → Process.Start with redirected stdout/stderr
-→ immediately start ReadToEndAsync for both pipes
+→ immediately start continuous async drains for both pipes
 → poll child exit + port file until bounded deadline
 → connect TcpClient to 127.0.0.1:<port>
-→ send protocol-v1 hello token
+→ send protocol-v1 hello
 → return E2EGame
 ```
 
-Pass the same E2E user arguments as the GDScript launcher:
+Pass:
 
 ```text
 --gdunit-e2e
---gdunit-e2e-target-scene=<scene>
---gdunit-e2e-port=0
+--gdunit-e2e-target-scene=<ScenePath>
+--gdunit-e2e-port=<ServerPort>
 --gdunit-e2e-port-file=<path>
 --gdunit-e2e-token=<token>
 --gdunit-e2e-log-verbosity=<level>
 ```
+
+Pipe drains retain only the most recent **4 MiB per stream**, matching the GDScript parent's `MAX_PIPE_BYTES`. Do not use unbounded `ReadToEndAsync` storage. A small fixed-size byte-tail/ring buffer continuously consumes the OS pipe while bounding retained managed memory.
 
 Shutdown:
 
 ```text
 best-effort quit when authenticated
 → close TCP client
-→ wait up to 1 second for process exit
-→ Process.Kill(entireProcessTree: true) if still alive
-→ wait up to 1 second for confirmed exit
-→ finish stdout/stderr drains
+→ wait up to 1 second
+→ Process.Kill(entireProcessTree: true) if alive
+→ wait up to 1 second again
+→ finish pipe drains
 → delete temp port file/directory best effort
-→ throw E2EException if owned child death still cannot be confirmed
+→ throw if owned child death still cannot be confirmed
 ```
 
 `DisposeAsync()` is idempotent. No production-only kill/test switch is added.
 
-## 12. Protocol compatibility
+## 12. Protocol compatibility and drift guard
 
-The C# client implements protocol v1 to interoperate with the unchanged GDScript server.
+C# implements protocol v1 independently because the GDScript protocol classes cannot run in a pure VSTest parent.
 
 Required invariants:
 
 - four-byte unsigned big-endian frame length;
 - UTF-8 JSON body;
-- `16 * 1024 * 1024` frame cap;
-- first command is `hello` with token and `protocol_version = 1`;
-- monotonically increasing request IDs;
+- 16 MiB frame cap;
+- hello first with token + protocol version 1;
+- monotonically increasing IDs;
 - one in-flight request;
-- existing command names/keys and response shapes;
-- existing `error` rendering semantics;
-- server-side waits use a client deadline of server timeout + `1 second`;
-- scene reload uses default command timeout + `1 second`;
-- host is fixed to `127.0.0.1`.
+- existing request keys, response shapes, error rendering, and `_logs` handling;
+- wait transport deadline = server timeout + 1 second;
+- reload transport deadline = default command timeout + 1 second;
+- fixed host `127.0.0.1`.
 
-No server change is required solely for C# support.
+Because C# duplicates protocol constants, a C# unit test reads `addons/gdunit_e2e/protocol/e2e_protocol.gd` and asserts these copies stay equal:
+
+```text
+PROTOCOL_VERSION              1
+MAX_FRAME_BYTES               16 * 1024 * 1024
+DEFAULT_COMMAND_TIMEOUT       5 seconds
+WAIT_MARGIN                   1 second
+```
+
+The same test also pins the parent diagnostic tail to the existing GDScript `E2EProcess.MAX_PIPE_BYTES = 4 * 1024 * 1024`.
+
+A drift guard is cheaper and clearer than inventing a cross-language shared constants generator.
 
 ## 13. Variant/JSON conversion
 
-The existing `_t` tags remain the wire contract.
-
-The first C# implementation decodes only types exercised by the supported wrapper surface/tests. Primitive values and containers use ordinary `System.Text.Json` conversion.
-
-The first required Godot-specific stand-in is:
+The first C# implementation recognizes only the Godot-specific tagged value needed by acceptance tests:
 
 ```text
 v2 -> E2EVector2(double X, double Y)
 ```
 
-Do not recreate the full Godot Variant type system. Raw `SendCommandAsync()` preserves access to unsupported/custom JSON shapes.
+Deferring other tags must be **loud**, not lossy. Before generic `System.Text.Json` deserialization, `E2EJson.Convert<T>` checks for an object `_t` tag. If the tag is not explicitly supported for the requested conversion, throw:
+
+```text
+Unsupported Godot value tag '<tag>'; use SendCommandAsync for raw access
+```
+
+This prevents a `v3`, `col`, `r2`, `np`, or other tagged payload from being silently deserialized into a plausible but incorrect type. Raw `SendCommandAsync()` remains the escape hatch for unsupported tags.
 
 ## 14. C# fixture
 
-Add one dedicated C# fixture scene with a C# root script. It exposes only behavior needed to validate the client:
+Add one C# fixture scene with only behavior needed by the C# acceptance tests:
 
 - readable/writable state;
 - callable method with return value;
-- action/button-driven state changes;
+- action/button state changes;
 - one signal;
-- deterministic scene-tree paths;
-- a fixture-only blocking method used to force the process-kill fallback.
+- deterministic paths;
+- one fixture-only blocking method used to prove kill fallback.
 
-The C# suite launches only this C# fixture. GDScript tests continue using GDScript fixtures.
+The C# suite launches only this fixture. Existing GDScript tests keep using GDScript fixtures.
 
 ## 15. Failure artifacts
 
-### 15.1 Existing GDScript behavior
-
-Unchanged. `GdUnitE2ETestSuite.after_test()` automatically captures reachable diagnostics on failure, then reaps the child and writes stdout/stderr.
-
-### 15.2 C# behavior
-
-`CaptureFailureArtifactsAsync(outputDirectory)` writes independent best-effort artifacts:
+C# failure artifacts use the same useful suite/test grouping as GDScript:
 
 ```text
-screenshot.png
-scene_tree.json
-engine_logs.json
-stdout.log        # when child has exited
-stderr.log        # when child has exited
+test_output/csharp/<suite>/<test>/
+  screenshot.png
+  scene_tree.json
+  engine_logs.json
+  stdout.log
+  stderr.log
 ```
 
-A failed diagnostic request never replaces the caller's primary failure.
+`CaptureFailureArtifactsAsync(outputDirectory)` stays public for handled negative paths. `RunAsync` selects the default suite/test directory from caller metadata and captures reachable artifacts automatically when the body throws.
 
-`RunAsync()` is the normal C# lifecycle helper. When its body throws, it starts best-effort failure capture while the child is reachable, performs teardown, appends process output after exit, and rethrows the original body exception unless cleanup itself fails. This gives ordinary C# assertion failures useful diagnostics without gdUnit4Net lifecycle hooks.
+Each artifact is independent and best effort. Process output is appended after teardown when available and is already bounded to the retained 4 MiB tail.
 
 ## 16. Testing strategy
 
-### 16.1 Existing GDScript tests
+### 16.1 Existing GDScript path
 
-Keep all existing unit/integration/failure-harness tests. Do not rewrite them for C#.
-
-Because every child becomes a Godot .NET child after the project conversion, existing integration helpers must use the product's **10-second** launch default. Remove their current explicit 5-second launch overrides unless a test is intentionally exercising timeout behavior.
+Keep all existing GDScript unit/integration/failure-harness tests. Once the repository becomes a Godot .NET project, remove ordinary explicit 5-second child-launch overrides so normal launches use the product's existing 10-second default. Keep short values that intentionally test timeout behavior.
 
 ### 16.2 C# unit tests
 
 Cover:
 
-- big-endian framing and partial reads;
-- oversized declaration rejection before body allocation;
-- hello/token and request IDs;
-- partial TCP reads, timeout/disconnect, one-in-flight enforcement;
+- framing and partial reads;
+- oversized declaration rejection before allocation;
+- hello/token, IDs, timeout/disconnect, one-in-flight fail-fast behavior;
 - response/error/log parsing;
-- minimal `_t` conversion;
-- launch argument construction and project/executable resolution;
-- wait-margin forwarding with a recording fake command sender;
+- supported `v2` conversion and rejection of unsupported `_t` tags;
+- protocol-constant + pipe-limit drift against GDScript sources;
+- launch argv and project/executable resolution;
+- wait/reload +1 second transport margin with a recording command sender;
 - runner smoke without `[RequireGodotRuntime]`.
 
-The wrapper-margin test pins `WaitForPropertyAsync`, `WaitForSignalAsync`, and `ReloadSceneAsync` to use the expected +1 second client deadline. Do not duplicate the GDScript server-side timeout race as another C# integration race.
+Do not duplicate the GDScript server timing-race integration test.
 
 ### 16.3 C# integration tests
 
-All child-launching C# tests use the C# fixture and Godot .NET executable.
+Verify only the C# fixture path:
 
-Verify:
-
-1. launch + port-file discovery + authenticated hello;
-2. C# scene becomes current;
+1. launch + port discovery + hello;
+2. C# scene current;
 3. property read/write;
-4. C# method call and return;
+4. method call;
 5. input/button behavior;
-6. deterministic property wait;
+6. property wait;
 7. signal wait;
 8. raw expected negative response;
 9. explicit artifact capture;
-10. `RunAsync` captures artifacts when a test body throws;
-11. graceful disposal reaps the child;
-12. cleanup still runs when a test body throws;
-13. blocked child uses forced-kill fallback;
-14. no surviving `--gdunit-e2e` process.
+10. `RunAsync` capture under `test_output/csharp/<suite>/<test>`;
+11. graceful disposal;
+12. body exception still cleans up;
+13. blocked child force-kill;
+14. no surviving child.
 
-Do not mirror every existing GDScript integration case.
+## 17. CI and clean-bootstrap coverage
 
-## 17. CI and build ordering
+Keep exactly two CI jobs: Linux and Windows. Both use Godot .NET 4.5.1 and .NET 8.
 
-Keep exactly two jobs:
-
-```text
-Linux
-Windows
-```
-
-Both use Godot .NET 4.5.1 and .NET 8.
-
-Required order per job:
+Main repository order:
 
 ```text
 checkout
 → install Godot .NET 4.5.1
 → setup .NET 8
 → resolve GODOT_BIN
-→ dotnet build godot-e2e.csproj
+→ dotnet build GodotE2E.csproj
 → bootstrap pinned GdUnit4
-→ run clean bootstrap/import contract
-→ run existing GDScript unit + integration suites
-→ run C# unit + C#->C# integration suite
-→ run existing intentional-failure harness
-→ verify no --gdunit-e2e child survives
-→ Linux only: verify release ZIP contents
+→ clean GDScript-only bootstrap/import contract
+→ existing GDScript suites
+→ C# suites
+→ intentional GDScript failure harness
+→ verify no child survives
+→ Linux only: package contract
 ```
 
-No Godot process should run in CI before the root game assembly has been built.
+No main-project Godot process runs before `GodotE2E.csproj` has built.
 
-The clean bootstrap test copies committed source to a fresh temp directory with `git archive HEAD`. Because root build outputs are not part of that archive, `tests/scripts/bootstrap_gdunit4_import_test.sh` must also run:
+The clean bootstrap test continues to prove the **GDScript-only consumer shape**, not another C# project build. After `git archive HEAD` into the temp tree it removes repository-only C# project/test fixture material:
 
-```bash
-dotnet build "$TEST_ROOT/godot-e2e.csproj"
+```text
+GodotE2E.csproj
+GodotE2E.sln
+tests/csharp/**
+tests/fixtures/csharp/**
 ```
 
-inside the temporary copy **before** invoking the Godot .NET editor there.
+It strips `C#` from `config/features` and removes the `[dotnet]` section from the temporary `project.godot`, then runs the existing GdUnit bootstrap/import check. It intentionally keeps `addons/gdunit_e2e/csharp/**` because that directory ships in the single addon archive; `.gdignore` keeps it out of Godot's resource scan.
 
-Linux uses Xvfb for child-launching suites.
+This restores coverage for a C#-free GDScript consumer without adding another Godot install or a C# build inside the temp archive.
 
 ## 18. Installation and packaging
 
@@ -557,8 +548,6 @@ LICENSE
 NOTICE
 ```
 
-No NuGet publication is required.
-
 ### GDScript users
 
 ```text
@@ -568,18 +557,21 @@ write GDScript E2E tests
 run through GdUnit4
 ```
 
+No C# project changes are required.
+
 ### C# users
 
 ```text
 use a Godot .NET project
 install/copy addons/gdunit_e2e
+exclude addons/gdunit_e2e/csharp/**/*.cs from the game .csproj Compile items
 create/use a C# gdUnit4Net test project
 reference addons/gdunit_e2e/csharp/GodotE2E.Client.csproj
 write tests using E2EGame.RunAsync
 run dotnet test
 ```
 
-The consumer test project owns gdUnit4Net package references; the client library does not.
+No NuGet publication is part of this change.
 
 ## 19. Compatibility policy
 
@@ -590,65 +582,63 @@ GDScript test -> GDScript game
 C# test       -> C# game
 ```
 
-Cross-language behavior may work incidentally because the server acts on generic Godot nodes, but do not add compatibility tests, documentation promises, or architecture for it in this release.
+Cross-language behavior may work incidentally because the child server acts on generic Godot nodes, but this release adds no compatibility promise or fixture for it.
 
 ## 20. Risks
 
 ### Risk 1: gdUnit4Net versus Godot 4.5.1 dependency graph
 
-`gdUnit4.api` may target a different GodotSharp package than the root game project.
+The test project may receive a different GodotSharp version transitively through gdUnit4Net. It stays isolated because the test project references only `GodotE2E.Client`, not the game project.
 
-Mitigation: `GodotE2E.Client` and `GodotE2E.Tests` do not reference the game project; the test project's transitive GodotSharp dependency remains isolated.
+### Risk 2: process/pipe behavior on Windows
 
-### Risk 2: Windows process/stdout behavior
+Redirected pipes can deadlock if not drained and can consume unbounded managed memory if fully retained. The C# parent continuously drains both streams and retains only the most recent 4 MiB per stream; Linux and Windows integration coverage pins graceful/forced exit.
 
-Native .NET `Process` semantics differ from GDScript but can still deadlock if redirected pipes are not drained.
+### Risk 3: Godot .NET cold start
 
-Mitigation: start `ReadToEndAsync` immediately for stdout and stderr and verify graceful + forced exit on Linux and Windows.
+The old standard-Godot integration helpers used several non-semantic 5-second launch overrides. Build before launch and use the existing 10-second product default for normal child starts.
 
-### Risk 3: Godot .NET cold-start cost versus old 5-second integration deadlines
+### Risk 4: C# source globbing
 
-The repository currently launches the standard editor and several integration helpers override the 10-second product default with 5 seconds. Switching every child to Godot .NET adds restore/JIT/assembly-load cost, especially on hosted Windows runners.
+Godot.NET.Sdk compiles C# sources under the project tree unless excluded. The repository and documented consumer C# setup explicitly remove `addons/gdunit_e2e/csharp/**/*.cs` from the game compile; the test project references the client project separately.
 
-Mitigation: build before any Godot process, build again inside the clean archived fixture, and remove the non-semantic 5-second integration overrides so ordinary launches use the 10-second product default.
+### Risk 5: duplicated protocol constants
 
-### Risk 4: C# facade grows into a duplicate framework
+C# necessarily duplicates a few GDScript wire constants. A focused drift test fails locally/CI when either side changes without the other.
 
-Mirroring every GDScript convenience method would double maintenance without demonstrated call sites.
+### Risk 6: cleanup during an existing test failure
 
-Mitigation: keep the wrapper subset in §9.3 and use `SendCommandAsync()` for the rest.
+A wedged child can make teardown fail at the same time an assertion/body exception is already propagating. `RunAsync` preserves the body exception as primary and records cleanup failure as secondary diagnostic; `DisposeAsync` remains strict when no earlier body failure exists.
 
 ## 21. Acceptance criteria
 
 The change is accepted when:
 
-- all existing GDScript public APIs remain unchanged;
-- `project.godot` declares Godot 4.5 C# + GL Compatibility and `project/assembly_name="GodotE2E"`;
-- `godot-e2e.csproj` uses Godot.NET.Sdk 4.5.1, assembly `GodotE2E`, and excludes both `tests/csharp/**/*.cs` and `addons/gdunit_e2e/csharp/**/*.cs`;
-- `godot-e2e.sln` contains only the root game project;
-- the imported C# fixture has a committed `Main.cs.uid`;
-- existing GDScript child-launching integration tests use the 10-second product launch default unless testing timeout behavior;
-- a gdUnit4Net C# test launches the C# fixture as a real separate Godot .NET process;
-- normal C# E2E tests run without `[RequireGodotRuntime]`;
-- the BCL client has no package dependency on GodotSharp or gdUnit4Net;
-- protocol framing, hello/token, IDs, error/log handling, and required serializer behavior match v1;
-- C# wait wrappers have unit coverage proving the +1 second transport margin;
-- representative property, method, input, wait, signal, scene-reload, raw-command, and artifact flows work against the C# fixture;
-- normal first-party C# tests/README use `RunAsync`, and a thrown test body produces reachable diagnostics before teardown;
-- `DisposeAsync` reaps normal children and force-kills a blocked child when necessary;
-- no C# or GDScript E2E child survives its test path;
-- CI builds the root C# game before the first Godot process and the clean-bootstrap temp copy builds its own assembly before import;
-- Linux and Windows CI run both supported same-language paths using Godot .NET 4.5.1;
-- the release ZIP contains `addons/gdunit_e2e/csharp/**` and excludes repository tests, root `.csproj`/`.sln`, GdUnit4, reports, and test output;
-- README makes no cross-language support claim.
+- existing GDScript public APIs remain unchanged;
+- `project.godot` declares the C# project identity and `GodotE2E.csproj`/`GodotE2E.sln` match it without a manual `<AssemblyName>` override;
+- the solution contains only the game project and `Main.cs.uid` is committed;
+- root game compile excludes `tests/csharp/**` and `addons/gdunit_e2e/csharp/**`;
+- the clean-bootstrap test strips repository C# project metadata/fixtures and still imports the shipped addon as a GDScript-only project;
+- GDScript child-launch tests use the 10-second default except intentional timeout cases;
+- gdUnit4Net C# tests run without `[RequireGodotRuntime]` and launch only the C# fixture;
+- `GodotE2E.Client` has no GodotSharp/gdUnit package dependency;
+- C# protocol constants and 4 MiB pipe-tail limit are guarded against GDScript drift;
+- unsupported `_t` tags fail loudly instead of silently converting;
+- C# wait/reload wrappers have +1 second margin unit coverage;
+- `RunAsync` writes failure artifacts to `test_output/csharp/<suite>/<test>` and preserves the body failure if cleanup also fails;
+- `DisposeAsync` reaps normal children and force-kills a blocked child;
+- no child survives either supported test path;
+- Linux/Windows CI build the root C# project before main-project Godot runs and execute both same-language paths;
+- the release ZIP contains `addons/gdunit_e2e/csharp/**` and excludes root project/test files, GdUnit4, reports, and test output;
+- README documents the C# game-project `<Compile Remove>` requirement and makes no cross-language support claim.
 
 ## 22. Deferred follow-ups
 
-Only consider these after the same-language C# path is useful:
+Only consider after the same-language C# path is useful:
 
 1. Cross-language compatibility fixtures/support.
-2. NuGet publication for `GodotE2E.Client`.
-3. More Godot Variant stand-ins driven by real usage.
+2. NuGet publication.
+3. Additional Godot Variant stand-ins driven by real usage.
 4. Automatic renamed-addon discovery for the C# bootstrap path.
-5. Process reuse, pooling, or parallel sessions.
+5. Process reuse/pooling/parallel sessions.
 6. Richer trace/diagnostic/editor UX.
