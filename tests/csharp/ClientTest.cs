@@ -47,6 +47,20 @@ public class ClientTest
         AssertThat(error!.Message).IsEqual("E2E session is not open");
     }
 
+    [TestCase]
+    public async Task Connect_AcceptsFloatEncodedResponseId()
+    {
+        // The real GDScript server round-trips integer ids as JSON floats
+        // ("id":1.0); matching stays numeric like the GDScript parent's ==.
+        await using var fake = FakeProtocolServer.Start(_ => Task.FromResult<JsonElement?>(
+            FakeProtocolServer.Json("""{"id":1.0,"ok":true}""")));
+        await using var client = new E2EClient();
+
+        var result = await client.ConnectAsync(fake.Port, "t");
+
+        AssertThat(result.Success).IsTrue();
+    }
+
     // ---- Command IDs ----
 
     [TestCase]
