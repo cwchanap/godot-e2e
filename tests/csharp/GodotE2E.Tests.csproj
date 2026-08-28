@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>GodotE2E.Tests</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- The C# client is BCL-only and never needs the Godot runtime; the
+         analyzer's name-based detection misfires on E2EVector2. -->
+    <NoWarn>$(NoWarn);GdUnit0501</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="gdUnit4.api" Version="5.0.0" />
