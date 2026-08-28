@@ -183,7 +183,6 @@ func _launch(scene_path := ""):
 func _options():
 	var options = LaunchOptions.new()
 	options.project_path = ProjectSettings.globalize_path("res://")
-	options.timeout_seconds = 5.0
 	options.extra_godot_args = PackedStringArray(["--headless", "--quiet"])
 	return options
 
