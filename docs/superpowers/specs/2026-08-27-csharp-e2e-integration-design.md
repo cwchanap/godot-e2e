@@ -214,6 +214,8 @@ Document this consumer rule in the C# installation steps:
 
 This avoids compiling the test transport into the shipped game assembly. The separate test project compiles/references the client library through `GodotE2E.Client.csproj`.
 
+This is mainly a game-assembly hygiene/ownership rule rather than a claim that two unrelated projects always produce an immediate duplicate-type compile error: the important invariant is that the game assembly does not own the test transport while the test project owns the client library.
+
 GDScript consumers do not modify a `.csproj`.
 
 ## 8. C# test-runner boundary
