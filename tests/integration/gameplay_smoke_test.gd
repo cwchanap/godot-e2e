@@ -91,7 +91,6 @@ func _launch_game():
 	var options := E2ELaunchOptionsScript.new()
 	options.project_path = ProjectSettings.globalize_path("res://")
 	options.godot_path = _godot_executable()
-	options.timeout_seconds = 5.0
 	options.extra_godot_args = PackedStringArray(["--quiet"])
 	var result = await _process.launch(options)
 	if not result.ok:
