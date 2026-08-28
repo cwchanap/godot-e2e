@@ -345,6 +345,8 @@ Wrapped remote-operation failures throw `E2EException`. gdUnit4Net/VSTest report
 
 `RunAsync()` catches ordinary test-body exceptions only to collect diagnostics before teardown, then rethrows. It does not inspect assertion-framework state.
 
+Artifact capture inside that catch is itself best effort: failures from screenshot/tree/log collection are swallowed so the original test-body exception remains the primary failure. Cleanup still runs in `finally`; standard C# `finally` semantics apply if `DisposeAsync()` itself cannot confirm child death.
+
 ## 11. Process ownership and cleanup
 
 `E2EGame` implements `IAsyncDisposable` and owns one `E2EProcess` in production. An internal non-owning command-sender constructor exists only for facade unit tests and has no process to dispose.
@@ -455,7 +457,7 @@ stderr.log        # when child has exited
 
 A failed diagnostic request never replaces the caller's primary failure.
 
-`RunAsync()` is the normal C# lifecycle helper. When its body throws, it starts failure capture while the child is reachable, performs teardown, appends process output after exit, and rethrows. This gives ordinary C# assertion failures useful diagnostics without gdUnit4Net lifecycle hooks.
+`RunAsync()` is the normal C# lifecycle helper. When its body throws, it starts best-effort failure capture while the child is reachable, performs teardown, appends process output after exit, and rethrows the original body exception unless cleanup itself fails. This gives ordinary C# assertion failures useful diagnostics without gdUnit4Net lifecycle hooks.
 
 ## 16. Testing strategy
 
