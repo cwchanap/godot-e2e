@@ -243,6 +243,8 @@ func test_csharp_fixture_script_is_uid_backed_after_import() -> void:
     assert_bool(FileAccess.file_exists("res://tests/fixtures/csharp/Main.cs.uid")).is_true()
 ```
 
+After creating the `.csproj`/solution, also assert their compile/solution boundaries with shell commands in Step 9; do not build an XML parser into GDScript only for this repo contract.
+
 Run before adding the files:
 
 ```bash
@@ -458,6 +460,11 @@ This makes ordinary integration launches inherit `E2ELaunchOptions.timeout_secon
 - [ ] **Step 9: Run GREEN repository + existing GDScript gates now**
 
 ```bash
+grep -q '<AssemblyName>GodotE2E</AssemblyName>' godot-e2e.csproj
+grep -q '<Compile Remove="tests/csharp/\*\*/\*.cs" />' godot-e2e.csproj
+grep -q '<Compile Remove="addons/gdunit_e2e/csharp/\*\*/\*.cs" />' godot-e2e.csproj
+test "$(dotnet sln godot-e2e.sln list | grep -c '\.csproj$')" -eq 1
+dotnet sln godot-e2e.sln list | grep -q '^godot-e2e.csproj$'
 dotnet build godot-e2e.csproj
 ./scripts/bootstrap_gdunit4.sh
 ./addons/gdUnit4/runtest.sh -a tests/unit -a tests/integration -c
@@ -465,7 +472,7 @@ dotnet build godot-e2e.csproj
 
 On Linux without a display, wrap the GDScript command in the same Xvfb invocation used by CI.
 
-Expected: project contract and all existing GDScript tests pass under Godot .NET before C# transport work starts.
+Expected: project boundary checks, build, and all existing GDScript tests pass under Godot .NET before C# transport work starts.
 
 - [ ] **Step 10: Commit**
 
