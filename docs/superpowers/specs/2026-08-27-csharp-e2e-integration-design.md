@@ -171,7 +171,7 @@ config/features=PackedStringArray("4.5", "C#", "GL Compatibility")
 project/assembly_name="GodotE2E"
 ```
 
-The `C#` feature marks the project as requiring a .NET-capable Godot build. Existing GDScript integration children therefore also run under the Godot .NET executable after this change.
+The `C#` feature records that the project requires C# support; a standard non-.NET Godot build reports it as an unsupported project feature. Existing GDScript integration children therefore use the Godot .NET executable after this change because the repository project now includes a C# fixture/assembly.
 
 ### 7.2 Root game project
 
