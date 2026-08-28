@@ -1183,7 +1183,14 @@ try
 catch
 {
     failureDirectory = game.CreateDefaultFailureArtifactDirectory();
-    await game.CaptureFailureArtifactsAsync(failureDirectory, CancellationToken.None);
+    try
+    {
+        await game.CaptureFailureArtifactsAsync(failureDirectory, CancellationToken.None);
+    }
+    catch
+    {
+        // Failure diagnostics are best effort; preserve the original test-body exception.
+    }
     throw;
 }
 finally
