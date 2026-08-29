@@ -74,6 +74,14 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             throw new E2EException(
                 $"Connect to {E2EProtocol.Host}:{port} timed out after {(int)effective.TotalMilliseconds} ms");
         }
+        catch (OperationCanceledException)
+        {
+            // Caller cancellation during TcpClient.ConnectAsync: preserve it
+            // (mirrors SendCoreAsync) instead of relabeling as a connection
+            // failure, so a cancelled launch/session stays distinguishable.
+            connection.Dispose();
+            throw;
+        }
         catch (Exception e)
         {
             connection.Dispose();

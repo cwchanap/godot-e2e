@@ -119,8 +119,18 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
                 await Task.Delay(PollIntervalMillis, cancellationToken);
             }
 
+            // The configured launch timeout bounds the WHOLE launch (port-file
+            // wait + hello). The polling loop above already consumed up to it,
+            // so pass the remaining deadline budget into ConnectAsync — never a
+            // fresh full timeout, which could run ~2x configured before failing.
+            // ConnectAsync treats TimeSpan.Zero as "use default", so a non-positive
+            // remainder must fail here rather than restart the clock.
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                throw new E2EException(
+                    $"Child E2E launch timed out after {(int)timeout.TotalMilliseconds} ms (no budget left for handshake)");
             _client = new E2EClient();
-            var hello = await _client.ConnectAsync(port, token, timeout, cancellationToken);
+            var hello = await _client.ConnectAsync(port, token, remaining, cancellationToken);
             if (!hello.Success)
                 throw new E2EException($"Child E2E handshake failed: {hello.Message}");
             _authenticated = true;

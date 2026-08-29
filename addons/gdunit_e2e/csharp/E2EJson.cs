@@ -23,9 +23,17 @@ public static class E2EJson
             var tagValue = tag.GetString()!;
             if (tagValue == "v2")
             {
-                return (T)(object)new E2EVector2(
+                // Build the typed value, but return it only when it is
+                // compatible with the requested T. An incompatible T (e.g.
+                // double, object, another record) must fail through the same
+                // explicit unsupported-conversion path — never escape as a raw
+                // InvalidCastException from the (T)(object) cast.
+                var vector = new E2EVector2(
                     element.GetProperty("x").GetDouble(),
                     element.GetProperty("y").GetDouble());
+                if (typeof(T) == typeof(E2EVector2))
+                    return (T)(object)vector;
+                throw UnsupportedConversion(tagValue, typeof(T));
             }
 
             throw Unsupported(tagValue);
@@ -58,4 +66,7 @@ public static class E2EJson
 
     private static E2EException Unsupported(string tag) => new(
         $"Unsupported Godot value tag '{tag}'; use SendCommandAsync for raw access");
+
+    private static E2EException UnsupportedConversion(string tag, Type requested) => new(
+        $"Godot value tag '{tag}' is not convertible to '{requested}'; use SendCommandAsync for raw access");
 }

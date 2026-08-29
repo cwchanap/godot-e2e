@@ -97,6 +97,37 @@ public class ProtocolTest
     }
 
     [TestCase]
+    public void Convert_V2TagRequestedAsIncompatibleTypeFailsLoudlyNotInvalidCast()
+    {
+        // A v2 payload is only supported when requested as E2EVector2. Any other
+        // T must fail through the explicit unsupported-conversion path (an
+        // E2EException pointing at raw access), never escape as a raw
+        // InvalidCastException from the (T)(object) cast.
+        var element = JsonDocument.Parse("{\"_t\":\"v2\",\"x\":1.5,\"y\":-2}").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<double>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Godot value tag 'v2' is not convertible to 'System.Double'; use SendCommandAsync for raw access");
+    }
+
+    [TestCase]
+    public void Convert_V2TagRequestedAsObjectFailsLoudlyNotBoxedVector()
+    {
+        // Requesting an untyped object for a tagged v2 is not "raw access";
+        // the loud contract rejects it rather than handing back a boxed
+        // E2EVector2 the caller did not ask for by name.
+        var element = JsonDocument.Parse("{\"_t\":\"v2\",\"x\":1.5,\"y\":-2}").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<object>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Godot value tag 'v2' is not convertible to 'System.Object'; use SendCommandAsync for raw access");
+    }
+
+    [TestCase]
     public void Convert_V3TagFailsLoudlyWithExactMessage()
     {
         var element = JsonDocument.Parse("{\"_t\":\"v3\",\"x\":1,\"y\":2,\"z\":3}").RootElement;

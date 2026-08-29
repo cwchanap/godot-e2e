@@ -62,6 +62,30 @@ public class ClientTest
         AssertThat(result.Success).IsTrue();
     }
 
+    [TestCase]
+    public async Task Connect_CallerCancellationDuringConnectIsPreservedNotRelabeled()
+    {
+        // Caller cancellation during TcpClient.ConnectAsync must be preserved
+        // (rethrown as OperationCanceledException), not relabeled as an
+        // E2EException "Failed to connect..." — mirroring SendCoreAsync. A
+        // pre-canceled token makes ConnectAsync throw OCE before any OS-level
+        // connect, exercising the same catch path a mid-connect cancel takes.
+        await using var fake = FakeProtocolServer.Start();
+        await using var client = new E2EClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var error = await CatchAsync(() => client.ConnectAsync(fake.Port, "t", cancellationToken: cts.Token));
+
+        AssertThat(error).IsInstanceOf<OperationCanceledException>();
+        // The abandoned socket was disposed: a follow-up connect starts clean
+        // (no leaked open session), so it fails on the open-session guard only
+        // if a session leaked — here it must simply not be open.
+        var closed = await CatchAsync(() => client.SendCommandAsync("next"));
+        AssertThat(closed).IsInstanceOf<E2EException>();
+        AssertThat(closed!.Message).IsEqual("E2E session is not open");
+    }
+
     // ---- Command IDs ----
 
     [TestCase]
