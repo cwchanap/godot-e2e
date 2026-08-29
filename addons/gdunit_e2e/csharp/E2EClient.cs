@@ -60,6 +60,11 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
                 "E2EClient already owns an open session; dispose it before connecting again");
 
         var effective = timeout == default ? E2EProtocol.DefaultCommandTimeout : timeout;
+        // One absolute deadline bounds both the TCP connect and the hello, so a
+        // slow connect cannot restart the clock for the handshake. Mirrors the
+        // single-deadline contract E2EProcess.LaunchAsync enforces for the whole
+        // launch (port-file wait + connect + hello): never a fresh full timeout.
+        var deadline = DateTime.UtcNow + effective;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(effective);
 
@@ -100,6 +105,17 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             DropConnection();
             throw new ObjectDisposedException(nameof(E2EClient));
         }
+        // The connect consumed part of the shared budget; the hello gets only
+        // what remains. A non-positive remainder fails loud rather than being
+        // treated as "use default" by SendCoreAsync, which would restart the
+        // clock a third time and let the configured timeout be exceeded.
+        var helloRemaining = deadline - DateTime.UtcNow;
+        if (helloRemaining <= TimeSpan.Zero)
+        {
+            DropConnection();
+            throw new E2EException(
+                $"Connect to {E2EProtocol.Host}:{port} timed out before the hello handshake after {(int)effective.TotalMilliseconds} ms");
+        }
         var result = await SendCoreAsync(
             "hello",
             new Dictionary<string, JsonElement>
@@ -107,7 +123,7 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
                 ["token"] = JsonSerializer.SerializeToElement(token),
                 ["protocol_version"] = JsonSerializer.SerializeToElement(E2EProtocol.ProtocolVersion),
             },
-            effective,
+            helloRemaining,
             cancellationToken,
             gate);
         // e2e_client.gd drops the peer when the hello handshake fails.
