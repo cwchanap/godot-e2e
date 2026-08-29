@@ -5,7 +5,7 @@ set -euo pipefail
 VERSION="0.1.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIST_DIR="$PROJECT_ROOT/dist"
+DIST_DIR="${GODOT_E2E_DIST_DIR:-$PROJECT_ROOT/dist}"
 ARCHIVE="$DIST_DIR/godot-e2e-$VERSION.zip"
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/godot-e2e-package.XXXXXX")"
 
@@ -33,6 +33,8 @@ fi
 
 mkdir -p "$STAGING_DIR/addons" "$DIST_DIR"
 cp -R "$PROJECT_ROOT/addons/gdunit_e2e" "$STAGING_DIR/addons/"
+# C# build output must never ship in the addon archive.
+find "$STAGING_DIR/addons/gdunit_e2e" -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
 cp "$PROJECT_ROOT/README.md" "$PROJECT_ROOT/LICENSE" "$PROJECT_ROOT/NOTICE" "$STAGING_DIR/"
 
 # Build from an explicit staging tree so development-only files cannot enter

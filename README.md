@@ -1,15 +1,23 @@
 # godot-e2e
 
-Native out-of-process end-to-end testing for Godot, using GDScript tests and
-GdUnit4. A test starts the same Godot project as a separate child process and
-drives it over an authenticated localhost connection.
+Native out-of-process end-to-end testing for Godot, with a GDScript path
+(GdUnit4 tests) and a C# path (gdUnit4Net tests). A test starts the same
+Godot project as a separate child process and drives it over an
+authenticated localhost connection.
 
-The 0.1.x MVP targets Godot 4.5 or newer and GdUnit4 6.x. It keeps GdUnit4 as
-the test runner, assertion library, lifecycle, CLI, and reporter; this addon
-only supplies the child-process client, automation server, and GdUnit4 suite
-base class.
+Supported pairings only: GDScript test -> GDScript game, and C# test -> C#
+game. Cross-language combinations are not supported by this release (they
+may work incidentally, but no fixture or promise covers them).
+
+The 0.1.x MVP targets Godot 4.5 or newer (Godot .NET 4.5.1 with .NET 8 for
+the C# path) and GdUnit4 6.x. GDScript users keep GdUnit4 as the test
+runner, assertion library, lifecycle, CLI, and reporter; C# users keep
+gdUnit4Net. This addon only supplies the child-process client, automation
+server, and suite/facade helpers.
 
 ## Install
+
+### GDScript users
 
 1. Install GdUnit4.
 2. Install/copy addons/gdunit_e2e.
@@ -21,6 +29,43 @@ launched by GdUnitE2ETestSuite.
 
 The addon archive does not include GdUnit4, the test fixtures, or the
 CI/bootstrap files.
+
+### C# users
+
+1. Use a Godot .NET project (this repository pins Godot .NET 4.5.1 and
+   .NET 8).
+2. Install/copy addons/gdunit_e2e.
+3. Exclude the shipped client sources from the game project's compile — add
+   this to your game `.csproj`:
+
+```xml
+<ItemGroup>
+  <Compile Remove="addons/gdunit_e2e/csharp/**/*.cs" />
+</ItemGroup>
+```
+
+   Without this the Godot.NET.Sdk globs the client sources into your game
+   assembly.
+
+4. Create a separate gdUnit4Net test project that references the client and
+   the pinned gdUnit packages (do not reference the game project from it):
+
+```xml
+<ItemGroup>
+  <PackageReference Include="gdUnit4.api" Version="5.0.0" />
+  <PackageReference Include="gdUnit4.test.adapter" Version="3.0.0" />
+  <PackageReference Include="gdUnit4.analyzers" Version="1.0.0" />
+  <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+</ItemGroup>
+<ItemGroup>
+  <ProjectReference Include="path/to/addons/gdunit_e2e/csharp/GodotE2E.Client.csproj" />
+</ItemGroup>
+```
+
+5. Write tests using `E2EGame.RunAsync` and run `dotnet test`. The client is
+   BCL-only and the tests do **not** use `[RequireGodotRuntime]`; the child
+   Godot process is found through the `GODOT_BIN` environment variable (or
+   `godot` on `PATH` as fallback).
 
 ## Minimal test
 
@@ -125,6 +170,40 @@ GdUnit4 test. This is intentional for direct protocol checks and handled
 negative paths. Wrapped methods do map failed requests to the suite failure
 state, as described above.
 
+## Minimal C# test
+
+A gdUnit4Net test uses the `E2EGame.RunAsync` facade. It launches the child,
+runs the body, captures failure artifacts under
+`test_output/csharp/<suite>/<test>/` when the body throws, and always closes
+and reaps the child (force-killing a blocked one):
+
+```csharp
+[TestSuite]
+public class MainReadyTest
+{
+    [TestCase]
+    public Task MainIsReady() => E2EGame.RunAsync(
+        new E2ELaunchOptions
+        {
+            ScenePath = "res://main.tscn",
+            ProjectPath = "<path to your Godot .NET project>",
+        },
+        async (game, ct) =>
+        {
+            await GdUnit4.Assertions.AssertThat(
+                await game.GetPropertyAsync<string>("/root/Main/Status", "text"))
+                .IsEqual("ready");
+        });
+}
+```
+
+For finer control (explicit artifact capture, custom teardown) use
+`await E2EGame.LaunchAsync(options)` and `await using`/`DisposeAsync` the
+returned game. The wrapped API surface mirrors the GDScript one: node and
+property access, method calls, scene changes/reloads, input and clicks,
+screenshots, waits for frames/physics/seconds/nodes/properties/signals, and
+the raw `SendCommandAsync` escape hatch.
+
 ## Same-project behavior and CI
 
 The child is launched from the same project tree as the test runner. The
@@ -153,11 +232,26 @@ set -e
 test "$status" -eq 100
 ```
 
-GitHub Actions runs these two commands on both Linux and Windows. Linux uses
-Xvfb for the child display; both jobs use the same Bash bootstrap and the
-same GdUnit4 6.2.1 pin. Reports and `test_output` are uploaded when a job
-fails. Windows hosted execution remains an external CI gate; local macOS
-verification does not substitute for it.
+The C# suites run with `dotnet test` (set `GODOT_BIN` so the tests can find
+the Godot .NET executable):
+
+```bash
+dotnet build GodotE2E.csproj
+dotnet test tests/csharp/GodotE2E.Tests.csproj
+```
+
+Build `GodotE2E.csproj` before launching any main-project Godot process, so
+the editor import never has to drive the C# build.
+
+GitHub Actions runs the full gate on both Linux and Windows with Godot .NET
+4.5.1 and .NET 8: bootstrap, clean GDScript-only bootstrap contract, the
+GDScript suites, the C# suites, the intentional failure harness, a survivor
+scan (always), and — on Linux — the release package contract. Linux uses
+Xvfb for the child display (the C# gameplay tests launch non-headless, like
+the GDScript integration suites); both jobs use the same Bash bootstrap and
+the same GdUnit4 6.2.1 pin. Reports, `test_output`, and the C# `TestResults`
+are uploaded. Windows hosted execution remains an external CI gate; local
+macOS verification does not substitute for it.
 
 ## Packaging and attribution
 
@@ -168,14 +262,18 @@ Create the 0.1.1 archive with:
 unzip -l dist/godot-e2e-0.1.1.zip
 ```
 
-The archive contains only `addons/gdunit_e2e/**`, `README.md`, `LICENSE`, and
-`NOTICE`. GdUnit4, tests, reports, `test_output`, and CI/bootstrap files are
-deliberately excluded. The adapted server/protocol portions are credited in
-`NOTICE` and remain under the Apache License, Version 2.0.
+The archive contains only `addons/gdunit_e2e/**` (including the shipped C#
+client under `addons/gdunit_e2e/csharp/**`), `README.md`, `LICENSE`, and
+`NOTICE`. GdUnit4, tests, reports, `test_output`, C# build output, and
+CI/bootstrap files are deliberately excluded. The release contract is pinned
+by `tests/scripts/package_release_test.sh`. The adapted server/protocol
+portions are credited in `NOTICE` and remain under the Apache License,
+Version 2.0.
 
 ## Deferred after 0.1.0
 
 The MVP intentionally does not include Playwright-style locators, retrying
-`expect()` assertions, engine-error-flood detection, a dedicated Godot .NET or
-C# fixture, macOS CI, suite-level process reuse/pools/parallel sessions, or
-richer trace/diagnostic/editor UX.
+`expect()` assertions, engine-error-flood detection, cross-language (C# test
+to GDScript game, or the reverse) compatibility fixtures, macOS CI, NuGet
+publication of the C# client, suite-level process reuse/pools/parallel
+sessions, or richer trace/diagnostic/editor UX.
