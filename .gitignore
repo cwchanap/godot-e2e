@@ -12,3 +12,8 @@ TestResults/
 # Godot resource UID files
 addons/**/*.uid
 tests/**/*.uid
+# The bootstrap scene's script UID is a committed contract: the scene
+# references it and tests/unit/installation_contract_test.gd asserts it
+# resolves on a fresh checkout, before Godot's editor import regenerates
+# .uid files (which is unreliable on Windows CI).
+!addons/gdunit_e2e/runtime/bootstrap.gd.uid
