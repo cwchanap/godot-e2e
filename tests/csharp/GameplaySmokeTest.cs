@@ -213,6 +213,33 @@ public class GameplaySmokeTest
         AssertThat(File.Exists(Path.Combine(directory, "stderr.log"))).IsTrue();
     }
 
+    [TestCase]
+    public async Task RunAsync_WhenCaptureSideThrows_PreservesBodyFailureAndStillDisposes()
+    {
+        E2EGame? game = null;
+        var marker = new InvalidOperationException("capture-throw-marker");
+
+        // §9.4: if the failure-directory construction / artifact capture
+        // itself throws, the ORIGINAL body exception must still propagate
+        // (same instance, original stack) and the child must still be torn
+        // down — a capture-side failure cannot orphan the child.
+        var error = await CatchAsync(() => E2EGame.RunAsync(
+            TestProject.CreateOptions(headless: false),
+            async (g, _) =>
+            {
+                game = g;
+                throw marker;
+            },
+            default,
+            nameof(RunAsync_WhenCaptureSideThrows_PreservesBodyFailureAndStillDisposes),
+            "GameplaySmokeTest.cs",
+            (_, _, _) => throw new IOException("failure-directory construction boom")));
+
+        AssertThat(error).IsSame(marker);
+        // DisposeAsync was attempted despite the capture-side throw.
+        AssertNoSurvivor(game!);
+    }
+
     // ---- helpers ----
 
     /// <summary>The §9.4 default failure directory RunAsync derives from

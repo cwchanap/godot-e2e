@@ -239,12 +239,26 @@ public sealed class E2EGame : IAsyncDisposable
 
     // ---- Failure-capturing runner (§9.4) ----
 
-    public static async Task RunAsync(
+    public static Task RunAsync(
         E2ELaunchOptions options,
         Func<E2EGame, CancellationToken, Task> body,
         CancellationToken cancellationToken = default,
         [CallerMemberName] string testName = "",
         [CallerFilePath] string callerFilePath = "")
+        => RunAsync(options, body, cancellationToken, testName, callerFilePath, BuildFailureDirectory);
+
+    /// <summary>
+    /// Internal overload lets tests force the failure-directory construction
+    /// to throw, proving capture-side failures never replace the body failure
+    /// or skip teardown (§9.4).
+    /// </summary>
+    internal static async Task RunAsync(
+        E2ELaunchOptions options,
+        Func<E2EGame, CancellationToken, Task> body,
+        CancellationToken cancellationToken,
+        string testName,
+        string callerFilePath,
+        Func<E2ELaunchOptions, string, string, string> buildFailureDirectory)
     {
         // A failed launch has already reaped its child; nothing to clean up.
         var game = await LaunchAsync(options, cancellationToken);
@@ -258,34 +272,45 @@ public sealed class E2EGame : IAsyncDisposable
         catch (Exception e)
         {
             bodyFailure = e;
-            // Best-effort capture while the child is still reachable.
-            failureDirectory = BuildFailureDirectory(options, testName, callerFilePath);
-            await TryCaptureArtifactsAsync(game, failureDirectory);
+            // Best-effort capture while the child is still reachable: a
+            // capture-side throw must never replace the body failure or
+            // skip teardown (§9.4).
+            try
+            {
+                failureDirectory = buildFailureDirectory(options, testName, callerFilePath);
+                await TryCaptureArtifactsAsync(game, failureDirectory);
+            }
+            catch (Exception)
+            {
+                // Best effort only.
+            }
         }
-
-        Exception? cleanupFailure = null;
-        try
+        finally
         {
-            await game.DisposeAsync();
-        }
-        catch (Exception e)
-        {
-            cleanupFailure = e;
-        }
+            Exception? cleanupFailure = null;
+            try
+            {
+                await game.DisposeAsync();
+            }
+            catch (Exception e)
+            {
+                cleanupFailure = e;
+            }
 
-        // Process tails are final only after the child exited.
-        if (failureDirectory is not null)
-            WriteProcessTails(game, failureDirectory, cleanupFailure);
+            // Process tails are final only after the child exited.
+            if (failureDirectory is not null)
+                WriteProcessTails(game, failureDirectory, cleanupFailure);
 
-        if (cleanupFailure is not null)
-        {
-            // Cleanup failure is secondary diagnostics: parent stderr + the
-            // failure artifacts. It must never replace the body failure.
-            Console.Error.WriteLine(
-                $"E2E cleanup failed{(bodyFailure is null ? "" : " after an earlier body failure")}: "
-                + $"{cleanupFailure.Message}");
-            if (bodyFailure is null)
-                ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+            if (cleanupFailure is not null)
+            {
+                // Cleanup failure is secondary diagnostics: parent stderr + the
+                // failure artifacts. It must never replace the body failure.
+                Console.Error.WriteLine(
+                    $"E2E cleanup failed{(bodyFailure is null ? "" : " after an earlier body failure")}: "
+                    + $"{cleanupFailure.Message}");
+                if (bodyFailure is null)
+                    ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+            }
         }
 
         if (bodyFailure is not null)
