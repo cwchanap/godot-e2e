@@ -53,6 +53,11 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
     {
         ThrowIfDisposed();
         using var gate = AcquireInFlightOrThrow();
+        // Like E2EProcess.LaunchAsync: fail loud on a live session instead
+        // of orphaning the first socket; reconnect only after DropConnection.
+        if (_connection is not null)
+            throw new E2EException(
+                "E2EClient already owns an open session; dispose it before connecting again");
 
         var effective = timeout == default ? E2EProtocol.DefaultCommandTimeout : timeout;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -278,13 +283,15 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             connection.Dispose();
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
+            return ValueTask.CompletedTask;
+        // _inFlight is deliberately not disposed: an in-flight command's
+        // gate releases it from SendCoreAsync's finally, and disposing here
+        // would make that Release throw ObjectDisposedException.
         DropConnection();
-        _inFlight.Dispose();
-        await Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     private void ThrowIfDisposed()

@@ -337,6 +337,22 @@ public class ClientTest
     }
 
     [TestCase]
+    public async Task Connect_SecondConnectWithOpenSessionFailsLoud()
+    {
+        await using var fake = FakeProtocolServer.Start(EchoOnly);
+        await using var client = new E2EClient();
+        await client.ConnectAsync(fake.Port, "t");
+
+        var error = await CatchAsync(() => client.ConnectAsync(fake.Port, "t"));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message)
+            .IsEqual("E2EClient already owns an open session; dispose it before connecting again");
+        // No replacement socket was created: exactly one hello reached the server.
+        AssertThat(fake.Received).HasSize(1);
+    }
+
+    [TestCase]
     public async Task Command_ConnectWhileCommandInFlightFailsFast()
     {
         await using var fake = FakeProtocolServer.Start(async command =>

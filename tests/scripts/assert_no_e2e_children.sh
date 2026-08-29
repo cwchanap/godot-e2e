@@ -28,7 +28,10 @@ scan_survivors() {
 	done
 }
 
-survivors="$(scan_survivors)"
+if ! survivors="$(scan_survivors)"; then
+	echo "Failed to snapshot running processes; cannot verify --gdunit-e2e child cleanup." >&2
+	exit 1
+fi
 
 if [ -n "$survivors" ]; then
 	echo "Found surviving --gdunit-e2e child process(es):" >&2
