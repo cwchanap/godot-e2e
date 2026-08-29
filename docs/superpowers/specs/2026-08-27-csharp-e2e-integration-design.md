@@ -1,8 +1,8 @@
 # C# E2E Integration Design
 
-**Status:** Approved for implementation  
-**Date:** 2026-08-27  
-**Repository:** `cwchanap/godot-e2e`  
+**Status:** Approved for implementation
+**Date:** 2026-08-27
+**Repository:** `cwchanap/godot-e2e`
 **Base contract:** `docs/superpowers/specs/2026-08-23-gdunit-e2e-design.md`
 
 ## 1. Summary

@@ -178,6 +178,8 @@ runs the body, captures failure artifacts under
 and reaps the child (force-killing a blocked one):
 
 ```csharp
+using static GdUnit4.Assertions;
+
 [TestSuite]
 public class MainReadyTest
 {
@@ -190,7 +192,7 @@ public class MainReadyTest
         },
         async (game, ct) =>
         {
-            await GdUnit4.Assertions.AssertThat(
+            AssertThat(
                 await game.GetPropertyAsync<string>("/root/Main/Status", "text"))
                 .IsEqual("ready");
         });
@@ -199,18 +201,21 @@ public class MainReadyTest
 
 For finer control (explicit artifact capture, custom teardown) use
 `await E2EGame.LaunchAsync(options)` and `await using`/`DisposeAsync` the
-returned game. The wrapped API surface mirrors the GDScript one: node and
-property access, method calls, scene changes/reloads, input and clicks,
-screenshots, waits for frames/physics/seconds/nodes/properties/signals, and
-the raw `SendCommandAsync` escape hatch.
+returned game. The wrapped surface is deliberately lean (§9.3): node and
+property access (`NodeExistsAsync`, `GetPropertyAsync`, `SetPropertyAsync`,
+`CallMethodAsync`, `GetSceneAsync`), input (`InputActionAsync`,
+`PressActionAsync`, `ClickNodeAsync`), waits (`WaitForPropertyAsync`,
+`WaitForSignalAsync`), and `ReloadSceneAsync`, `ScreenshotAsync`,
+`CaptureFailureArtifactsAsync`. There are no wrappers for scene changes,
+frame/physics/seconds/node waits, `wait_for_node`, or tree dumps — those stay
+reachable through the raw `SendCommandAsync` escape hatch.
 
 ## Same-project behavior and CI
 
-The child is launched from the same project tree as the test runner. The
-client rejects a different project path, and the child uses the repository's
-addon rather than a copied fixture addon. The automation server is created
-only in the child process, so normal project runs remain ordinary project
-behavior.
+The child is launched from the same project tree as the test runner and uses
+the repository's addon rather than a copied fixture addon. The automation
+server is created only in the child process, so normal project runs remain
+ordinary project behavior.
 
 For local development in this repository, install the pinned GdUnit4 copy and
 run the normal suite by directory. Keep the intentional failure fixture out of
