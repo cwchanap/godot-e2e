@@ -104,7 +104,10 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
             _stderrDrain = DrainAsync(_child.StandardError.BaseStream, _stderrTail, _drainCts.Token);
 
             var port = 0;
-            var deadline = DateTime.UtcNow + timeout;
+            // Monotonic start timestamp (mirrors e2e_process.gd's
+            // Time.get_ticks_msec); DateTime.UtcNow is a wall clock that NTP or
+            // a manual adjustment can shift during the port-file wait.
+            var startTimestamp = Stopwatch.GetTimestamp();
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -113,7 +116,7 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
                         $"Godot child exited before writing its port file (exit {_child.ExitCode})");
                 if (TryReadPortFile(_portFile, out port))
                     break;
-                if (DateTime.UtcNow >= deadline)
+                if (Stopwatch.GetElapsedTime(startTimestamp) >= timeout)
                     throw new E2EException(
                         $"Timed out waiting for the child E2E server port file after {(int)timeout.TotalMilliseconds} ms");
                 await Task.Delay(PollIntervalMillis, cancellationToken);
@@ -121,11 +124,11 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
 
             // The configured launch timeout bounds the WHOLE launch (port-file
             // wait + hello). The polling loop above already consumed up to it,
-            // so pass the remaining deadline budget into ConnectAsync — never a
-            // fresh full timeout, which could run ~2x configured before failing.
+            // so pass the remaining budget into ConnectAsync — never a fresh
+            // full timeout, which could run ~2x configured before failing.
             // ConnectAsync treats TimeSpan.Zero as "use default", so a non-positive
             // remainder must fail here rather than restart the clock.
-            var remaining = deadline - DateTime.UtcNow;
+            var remaining = timeout - Stopwatch.GetElapsedTime(startTimestamp);
             if (remaining <= TimeSpan.Zero)
                 throw new E2EException(
                     $"Child E2E launch timed out after {(int)timeout.TotalMilliseconds} ms (no budget left for handshake)");

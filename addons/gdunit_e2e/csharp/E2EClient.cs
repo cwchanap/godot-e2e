@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text.Json;
 
@@ -60,11 +61,14 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
                 "E2EClient already owns an open session; dispose it before connecting again");
 
         var effective = timeout == default ? E2EProtocol.DefaultCommandTimeout : timeout;
-        // One absolute deadline bounds both the TCP connect and the hello, so a
-        // slow connect cannot restart the clock for the handshake. Mirrors the
-        // single-deadline contract E2EProcess.LaunchAsync enforces for the whole
-        // launch (port-file wait + connect + hello): never a fresh full timeout.
-        var deadline = DateTime.UtcNow + effective;
+        // One monotonic start timestamp bounds both the TCP connect and the
+        // hello, so a slow connect cannot restart the clock for the handshake.
+        // Mirrors the single-deadline contract E2EProcess.LaunchAsync enforces
+        // for the whole launch (port-file wait + connect + hello): never a
+        // fresh full timeout. Stopwatch is monotonic (like e2e_client.gd's
+        // Time.get_ticks_msec); DateTime.UtcNow is a wall clock that NTP or a
+        // manual adjustment can shift mid-handshake.
+        var startTimestamp = Stopwatch.GetTimestamp();
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(effective);
 
@@ -109,7 +113,7 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
         // what remains. A non-positive remainder fails loud rather than being
         // treated as "use default" by SendCoreAsync, which would restart the
         // clock a third time and let the configured timeout be exceeded.
-        var helloRemaining = deadline - DateTime.UtcNow;
+        var helloRemaining = effective - Stopwatch.GetElapsedTime(startTimestamp);
         if (helloRemaining <= TimeSpan.Zero)
         {
             DropConnection();
