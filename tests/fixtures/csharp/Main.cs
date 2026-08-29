@@ -55,7 +55,7 @@ public partial class Main : Node
 
     public async void TriggerPulse()
     {
-        await ToSignal(GetTree().CreateTimer(0.1), Godot.Timer.SignalName.Timeout);
+        await ToSignal(GetTree().CreateTimer(1.0), Godot.Timer.SignalName.Timeout);
         if (IsInsideTree())
             EmitSignal(SignalName.Pulse);
     }

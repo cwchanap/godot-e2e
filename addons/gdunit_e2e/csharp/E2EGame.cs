@@ -218,10 +218,13 @@ public sealed class E2EGame : IAsyncDisposable
 
         // Raw command seam, deliberately: while handling a failure, a failed
         // diagnostic RPC must not be mapped into a thrown wrapper failure.
-        // The screenshot file existing on disk is the source of truth.
+        // The screenshot file existing on disk is the source of truth, so a
+        // stale artifact from an earlier run must not survive a failed capture.
+        var screenshotPath = Path.Combine(outputDirectory, "screenshot.png");
+        TryDeleteFile(screenshotPath);
         _ = await TrySendAsync(
             "screenshot",
-            Params(("save_path", Path.Combine(outputDirectory, "screenshot.png"))));
+            Params(("save_path", screenshotPath)));
 
         var tree = JsonDocument.Parse("{}").RootElement.Clone();
         var treeResult = await TrySendAsync(
@@ -377,6 +380,18 @@ public sealed class E2EGame : IAsyncDisposable
         try
         {
             Directory.CreateDirectory(path);
+        }
+        catch (Exception)
+        {
+            // Best effort only.
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
         }
         catch (Exception)
         {

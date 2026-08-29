@@ -8,3 +8,7 @@ dist/
 bin/
 obj/
 TestResults/
+
+# Godot resource UID files
+addons/**/*.uid
+tests/**/*.uid
