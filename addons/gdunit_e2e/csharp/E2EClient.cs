@@ -31,6 +31,7 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
     private TcpClient? _connection;
     private int _nextId = 1;
     private readonly SemaphoreSlim _inFlight = new(1, 1);
+    private readonly List<JsonElement> _collectedLogs = new();
     private int _disposed;
 
     /// <summary>
@@ -91,6 +92,10 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
         return result;
     }
 
+    /// <summary>Snapshot of every response log entry seen this session,
+    /// mirroring e2e_client.gd's collected logs used for failure artifacts.</summary>
+    public IReadOnlyList<JsonElement> GetCollectedLogs() => _collectedLogs.ToList();
+
     public async Task<E2EResult> SendCommandAsync(
         string action,
         IReadOnlyDictionary<string, JsonElement>? parameters = null,
@@ -139,7 +144,7 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
                 stream, JsonSerializer.SerializeToUtf8Bytes(command), timeoutCts.Token);
             var body = await E2EFraming.ReadFrameAsync(stream, timeoutCts.Token);
             using var document = JsonDocument.Parse(body);
-            return BuildResult(action, commandId, document.RootElement);
+            return BuildResultAndCollect(document.RootElement, action, commandId);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -199,6 +204,13 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             Message = hasError ? RenderError(response) : string.Empty,
             Logs = ExtractLogs(response),
         };
+    }
+
+    private E2EResult BuildResultAndCollect(JsonElement response, string action, int commandId)
+    {
+        var result = BuildResult(action, commandId, response);
+        _collectedLogs.AddRange(result.Logs);
+        return result;
     }
 
     private static string RenderError(JsonElement response)
