@@ -80,7 +80,18 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             throw new E2EException($"Failed to connect to {E2EProtocol.Host}:{port}", e);
         }
 
-        _connection = connection;
+        Volatile.Write(ref _connection, connection);
+        // DisposeAsync may have won the race while we awaited
+        // TcpClient.ConnectAsync: it set _disposed and DropConnection found
+        // _connection still null, so the socket we just published would leak
+        // (a later DisposeAsync returns early because _disposed is already set).
+        // Tear it down if disposal already ran. A disposal that runs after this
+        // point is already safe: DropConnection finds the published socket.
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            DropConnection();
+            throw new ObjectDisposedException(nameof(E2EClient));
+        }
         var result = await SendCoreAsync(
             "hello",
             new Dictionary<string, JsonElement>
