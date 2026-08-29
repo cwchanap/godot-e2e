@@ -237,6 +237,40 @@ public class ClientTest
     }
 
     [TestCase]
+    public async Task Command_CallerCancellationDropsSessionAndPreservesCancellation()
+    {
+        // Caller cancellation must invalidate the session: the command may
+        // already be on the wire (or partly written), so a late server response
+        // would corrupt the next command's frame/id. The cancellation itself is
+        // preserved (rethrown as OperationCanceledException, not wrapped as a
+        // timeout E2EException), and the socket is dropped so it can't be reused.
+        await using var fake = FakeProtocolServer.Start(async command =>
+        {
+            if (command.GetProperty("action").GetString() == "hello")
+                return FakeProtocolServer.Echo(command);
+            await Task.Delay(10_000);
+            return FakeProtocolServer.Echo(command);
+        });
+        await using var client = new E2EClient();
+        await client.ConnectAsync(fake.Port, "t");
+
+        using var cts = new CancellationTokenSource();
+        var inFlight = client.SendCommandAsync("slow", cancellationToken: cts.Token);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
+        var clock = Stopwatch.StartNew();
+        var error = await CatchAsync(() => inFlight);
+        clock.Stop();
+
+        // Caller cancellation is preserved, not re-labelled as a transport timeout.
+        AssertThat(error).IsInstanceOf<OperationCanceledException>();
+        AssertThat(clock.ElapsedMilliseconds).IsLess(5_000);
+        // The session was dropped: a follow-up command cannot reuse the stale socket.
+        var closed = await CatchAsync(() => client.SendCommandAsync("next"));
+        AssertThat(closed).IsInstanceOf<E2EException>();
+        AssertThat(closed!.Message).IsEqual("E2E session is not open");
+    }
+
+    [TestCase]
     public async Task Command_AbruptDisconnectThrowsE2EException()
     {
         await using var fake = FakeProtocolServer.Start(EchoOnly);
