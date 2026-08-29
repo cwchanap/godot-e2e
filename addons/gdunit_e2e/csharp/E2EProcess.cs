@@ -12,7 +12,7 @@ namespace GodotE2E;
 /// whole-tree kill, bounded confirmation, temp cleanup — strict on unconfirmed
 /// child death. Mirrors e2e_process.gd.
 /// </summary>
-public sealed class E2EProcess : IAsyncDisposable
+public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
 {
     private const int PollIntervalMillis = 25;    // e2e_process.gd POLL_INTERVAL_MILLIS
     private const int ShutdownGraceMillis = 1000; // e2e_process.gd SHUTDOWN_GRACE_MILLIS
@@ -55,6 +55,9 @@ public sealed class E2EProcess : IAsyncDisposable
     public string? PortFile => _portFile;
     public string StdoutText => _stdoutTail.ToString();
     public string StderrText => _stderrTail.ToString();
+
+    public IReadOnlyList<JsonElement> GetCollectedLogs() =>
+        _client?.GetCollectedLogs() ?? Array.Empty<JsonElement>();
 
     public async Task LaunchAsync(E2ELaunchOptions options, CancellationToken cancellationToken = default)
     {

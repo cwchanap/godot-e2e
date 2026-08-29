@@ -9,14 +9,19 @@ internal static class TestProject
 {
     public const string ScenePath = "res://tests/fixtures/csharp/main.tscn";
 
-    public static E2ELaunchOptions CreateOptions() => new()
+    /// <summary>
+    /// Headless by default for lifecycle work. Input simulation (click_node,
+    /// input_action routing to Controls) and viewport screenshots need a real
+    /// window, exactly like the GDScript integration suites — pass
+    /// <c>headless: false</c> for gameplay and artifact tests.
+    /// </summary>
+    public static E2ELaunchOptions CreateOptions(bool headless = true) => new()
     {
         ScenePath = ScenePath,
         ProjectPath = TestPaths.RepositoryRoot,
         GodotPath = ResolveGodotPath(),
-        // Headless keeps CI (no display) and local runs identical; --quiet
-        // keeps the drained child output small.
-        ExtraGodotArgs = ["--headless", "--quiet"],
+        // --quiet keeps the drained child output small.
+        ExtraGodotArgs = headless ? ["--headless", "--quiet"] : ["--quiet"],
     };
 
     public static string ResolveGodotPath() =>

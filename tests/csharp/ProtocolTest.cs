@@ -130,6 +130,63 @@ public class ProtocolTest
         AssertThat(value).IsEqual(new[] { 3, 1, 4 });
     }
 
+    [TestCase]
+    public void Convert_NestedUnsupportedTagFailsLoudlyWithExactMessage()
+    {
+        // e2e_serializer.gd recurses, so nested tagged payloads are real on
+        // the wire; only the ROOT tag was checked before.
+        var element = JsonDocument.Parse(
+            "[{\"position\":{\"_t\":\"col\",\"r\":1,\"g\":0,\"b\":0,\"a\":1}}]").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<object>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Unsupported Godot value tag 'col'; use SendCommandAsync for raw access");
+    }
+
+    [TestCase]
+    public void Convert_DeeplyNestedUnsupportedTagFailsLoudly()
+    {
+        var element = JsonDocument.Parse(
+            "{\"a\":{\"b\":[{\"_t\":\"np\",\"data\":\"x\"}]}}").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<Dictionary<string, object>>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Unsupported Godot value tag 'np'; use SendCommandAsync for raw access");
+    }
+
+    [TestCase]
+    public void Convert_NestedV2InsideArrayFailsLoudlyNotSilentlyWrong()
+    {
+        // Array[Vector2] arrives as [{"_t":"v2",...}] on the wire. Nested v2
+        // conversion is out of scope, so it must fail LOUD — never silently
+        // deserialize into a plausible but wrong shape.
+        var element = JsonDocument.Parse(
+            "[{\"_t\":\"v2\",\"x\":1,\"y\":2},{\"_t\":\"v2\",\"x\":3,\"y\":4}]").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<IReadOnlyList<E2EVector2>>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Unsupported Godot value tag 'v2'; use SendCommandAsync for raw access");
+    }
+
+    [TestCase]
+    public void Convert_NestedV2InUntypedPayloadFailsLoudly()
+    {
+        var element = JsonDocument.Parse(
+            "{\"items\":[{\"_t\":\"v2\",\"x\":1,\"y\":2}]}").RootElement;
+
+        var error = Catch(() => E2EJson.Convert<Dictionary<string, object>>(element));
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.Message).IsEqual(
+            "Unsupported Godot value tag 'v2'; use SendCommandAsync for raw access");
+    }
+
     // ---- Drift guard: C# protocol constants vs GDScript sources ----
 
     [TestCase]
