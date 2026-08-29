@@ -158,6 +158,16 @@ public sealed class E2EClient : IE2ECommandSender, IAsyncDisposable
             throw new E2EException(
                 $"Command '{action}' timed out after {(int)timeout.TotalMilliseconds} ms");
         }
+        catch (OperationCanceledException)
+        {
+            // Caller cancellation: the command may already be on the wire (or
+            // partly written), so a late server response would land on the
+            // socket and corrupt the next command's frame/id. Drop the session
+            // before rethrowing so the cancellation semantics are preserved but
+            // the stale socket can never be reused.
+            DropConnection();
+            throw;
+        }
         catch (Exception e) when (e is EndOfStreamException or IOException or SocketException or ObjectDisposedException)
         {
             DropConnection();
