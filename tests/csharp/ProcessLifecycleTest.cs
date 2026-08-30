@@ -103,6 +103,29 @@ public class ProcessLifecycleTest
     }
 
     [TestCase]
+    public async Task Launch_CallerCancellationIsPreservedAndChildIsReaped()
+    {
+        // Caller cancellation during launch (port-file polling, connect, or
+        // hello) must be preserved as OperationCanceledException — mirroring
+        // the in-flight command/body path (E2EClient.ConnectAsync/SendCoreAsync
+        // rethrow caller cancellation) — so E2EGame.LaunchAsync/RunAsync can
+        // distinguish cancellation from a launch failure instead of seeing an
+        // E2EException("Godot child launch was cancelled"). A pre-canceled
+        // token throws from the port-file polling loop right after the child
+        // starts, exercising the launch catch's reap-then-rethrow path.
+        var process = new E2EProcess();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var error = await CatchAsync(() => process.LaunchAsync(TestProject.CreateOptions(), cts.Token));
+
+        // Cancellation is preserved, not wrapped as an E2EException launch failure.
+        AssertThat(error).IsInstanceOf<OperationCanceledException>();
+        // The child was reaped before the rethrow; the owned handle confirms death.
+        AssertThat(process.HasExited).IsTrue();
+    }
+
+    [TestCase]
     public async Task RelaunchOfLiveInstance_ThrowsAndKeepsFirstChild()
     {
         var process = new E2EProcess();
