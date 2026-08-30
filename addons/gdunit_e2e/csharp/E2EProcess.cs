@@ -144,10 +144,21 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
             // Already disposed so a later DisposeAsync cannot mask this failure.
             Interlocked.Exchange(ref _disposed, 1);
             await ShutdownAsync(throwOnUnconfirmedDeath: false);
+            // Caller cancellation during launch (port-file polling, connect,
+            // or hello) is preserved as OperationCanceledException, mirroring
+            // the in-flight command/body path: E2EClient.ConnectAsync and
+            // SendCoreAsync rethrow caller cancellation while converting
+            // timeout cancellation to E2EException, and the port-file loop
+            // above uses a manual Stopwatch check (no linked timeout CTS), so
+            // an OperationCanceledException reaching here is genuinely caller
+            // cancellation — not a timeout. Rethrow it so E2EGame.LaunchAsync
+            // /RunAsync can distinguish cancellation from a launch failure;
+            // the child is already reaped above.
+            if (e is OperationCanceledException)
+                throw;
             var message = e switch
             {
                 E2EException failure => failure.Message,
-                OperationCanceledException => "Godot child launch was cancelled",
                 _ => $"Failed to launch Godot child: {e.GetType().Name}: {e.Message}",
             };
             throw new E2EException(message + TailDiagnostics(), e);
