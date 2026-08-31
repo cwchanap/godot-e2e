@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading;
 
 namespace GodotE2E;
 
@@ -45,14 +46,20 @@ internal sealed class PipeTail
     /// <summary>
     /// Decodes retained bytes as UTF-8. A multi-byte character split at the
     /// ring seam decodes as U+FFFD; acceptable for diagnostics.
+    /// Called from threads other than the drain task, so both fields are
+    /// snapshotted once via Volatile.Read: re-loading either between the
+    /// bounds check and GetString can race a concurrent Append and throw
+    /// ArgumentOutOfRangeException.
     /// </summary>
     public override string ToString()
     {
-        if (_count == 0)
+        var count = Volatile.Read(ref _count);
+        var start = Volatile.Read(ref _start);
+        if (count == 0)
             return string.Empty;
-        if (_count < _buffer.Length)
-            return Encoding.UTF8.GetString(_buffer, 0, _count);
-        return Encoding.UTF8.GetString(_buffer, _start, _buffer.Length - _start)
-            + Encoding.UTF8.GetString(_buffer, 0, _start);
+        if (count < _buffer.Length)
+            return Encoding.UTF8.GetString(_buffer, 0, count);
+        return Encoding.UTF8.GetString(_buffer, start, _buffer.Length - start)
+            + Encoding.UTF8.GetString(_buffer, 0, start);
     }
 }
