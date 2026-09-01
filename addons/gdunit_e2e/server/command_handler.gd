@@ -612,7 +612,7 @@ func _cmd_wait_for_signal(cmd: Dictionary, id) -> Dictionary:
 func _cmd_wait_for_property(cmd: Dictionary, id) -> Dictionary:
 	var path: String = cmd.get("path", "")
 	var property: String = cmd.get("property", "")
-	var expected = cmd.get("value")
+	var expected = JsonSerializer.deserialize(cmd.get("value"))
 	var timeout: float = cmd.get("timeout", 5.0)
 	return {
 		"_deferred": true,

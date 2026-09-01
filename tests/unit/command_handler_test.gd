@@ -83,6 +83,31 @@ func test_tree_and_input_wait_commands_keep_upstream_response_shapes() -> void:
 		"response": {"id": 8, "ok": true},
 	})
 
+func test_wait_for_property_deserializes_tagged_values_like_set_property() -> void:
+	var player := Node2D.new()
+	player.name = "Player"
+	_fixture.add_child(player)
+
+	_handler.execute({
+		"id": 40,
+		"action": "set_property",
+		"path": "/root/Task3Fixture/Player",
+		"property": "position",
+		"value": {"_t": "v2", "x": 1.0, "y": 2.0},
+	})
+	var wait_result: Dictionary = _handler.execute({
+		"id": 41,
+		"action": "wait_for_property",
+		"path": "/root/Task3Fixture/Player",
+		"property": "position",
+		"value": {"_t": "v2", "x": 1.0, "y": 2.0},
+		"timeout": 1.0,
+	})
+	# The wait value must be deserialized so automation_server compares Vector2 == Vector2,
+	# matching what set_property stored on the node.
+	assert_that(wait_result.get("value")).is_equal(Vector2(1.0, 2.0))
+
+
 func test_scene_change_reload_screenshot_and_quit_keep_upstream_shapes() -> void:
 	assert_that(_handler.execute({"id": 10, "action": "get_scene"})).is_equal({"id": 10, "error": "No current scene"})
 
