@@ -260,10 +260,10 @@ macOS verification does not substitute for it.
 
 ## Packaging and attribution
 
-Create the 0.1.1 archive with:
+Create a versioned archive with:
 
 ```bash
-./scripts/package_release.sh
+./scripts/package_release.sh 0.1.1
 unzip -l dist/godot-e2e-0.1.1.zip
 ```
 
@@ -274,6 +274,11 @@ CI/bootstrap files are deliberately excluded. The release contract is pinned
 by `tests/scripts/package_release_test.sh`. The adapted server/protocol
 portions are credited in `NOTICE` and remain under the Apache License,
 Version 2.0.
+
+To publish a release, push a stable SemVer tag such as `v0.1.1`. GitHub
+Actions runs the Linux and Windows gates first; when both pass, it creates the
+GitHub Release with generated notes and attaches `godot-e2e-0.1.1.zip`.
+Pre-release tags are intentionally not supported by this workflow.
 
 ## Deferred after 0.1.0
 
