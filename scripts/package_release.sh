@@ -2,7 +2,12 @@
 
 set -euo pipefail
 
-VERSION="0.1.1"
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+	echo "Usage: $0 <version>" >&2
+	exit 2
+fi
+
+VERSION="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="${GODOT_E2E_DIST_DIR:-$PROJECT_ROOT/dist}"
