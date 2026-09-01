@@ -9,13 +9,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/godot-e2e-package-test.XXXXXX")"
+TEST_VERSION="9.8.7"
 
 cleanup() {
 	rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
-GODOT_E2E_DIST_DIR="$WORK_DIR/dist" bash "$PROJECT_ROOT/scripts/package_release.sh"
+GODOT_E2E_DIST_DIR="$WORK_DIR/dist" bash "$PROJECT_ROOT/scripts/package_release.sh" "$TEST_VERSION"
+
+expected_archive="$WORK_DIR/dist/godot-e2e-$TEST_VERSION.zip"
+if [ ! -f "$expected_archive" ]; then
+	echo "Expected release archive: $expected_archive" >&2
+	exit 1
+fi
 
 archives=("$WORK_DIR/dist"/*.zip)
 if [ "${#archives[@]}" -ne 1 ]; then
