@@ -135,6 +135,21 @@ public class ProcessTest
         AssertThat(E2EProcess.ResolveProjectPath(null)).IsEqual(TestPaths.RepositoryRoot);
     }
 
+    // ---- shutdown kill ----
+
+    [TestCase]
+    public void TryKillTree_LeavesIncompleteTreeKillToDeathConfirmation()
+    {
+        // Kill(entireProcessTree: true) throws AggregateException when some
+        // descendants survive; shutdown must still reach its death check.
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        E2EProcess.TryKillTree(self, _ => throw new AggregateException(new InvalidOperationException()));
+        E2EProcess.TryKillTree(self, _ => throw new System.ComponentModel.Win32Exception());
+        E2EProcess.TryKillTree(self, _ => throw new InvalidOperationException());
+        AssertThrown(() => E2EProcess.TryKillTree(self, _ => throw new ArgumentException()))
+            .IsInstanceOf<ArgumentException>();
+    }
+
     // ---- bounded pipe tail (output-load regression) ----
 
     [TestCase]

@@ -354,13 +354,19 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
         }
     }
 
-    private static void TryKillTree(Process child)
+    private static void TryKillTree(Process child) =>
+        TryKillTree(child, process => process.Kill(entireProcessTree: true));
+
+    internal static void TryKillTree(Process child, Action<Process> kill)
     {
         try
         {
-            child.Kill(entireProcessTree: true);
+            kill(child);
         }
-        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        // AggregateException: the tree kill could not terminate every descendant.
+        catch (Exception e) when (e is InvalidOperationException
+            or System.ComponentModel.Win32Exception
+            or AggregateException)
         {
             // Raced an exit; death confirmation below is the source of truth.
         }
