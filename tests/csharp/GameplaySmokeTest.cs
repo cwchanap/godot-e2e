@@ -60,6 +60,10 @@ public class GameplaySmokeTest
             await game.CallMethodAsync<object>("/root/Main", "TriggerPulse");
             await game.WaitForSignalAsync("/root/Main", "Pulse", 3);
 
+            // Signals that carry arguments complete the wait as well.
+            await game.CallMethodAsync<object>("/root/Main", "TriggerCountedPulse");
+            await game.WaitForSignalAsync("/root/Main", "CountedPulse", 3);
+
             // Raw expected negative: SendCommandAsync returns E2EResult.
             var negative = await game.SendCommandAsync(
                 "get_property",

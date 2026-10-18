@@ -1,15 +1,30 @@
 extends Node2D
 
 
+signal pinged(count: int)
+signal ticked
+
 @onready var status: Label = $Status
 @onready var click_status: Label = $ClickStatus
 var action_count := 0
 var action_release_count := 0
 var action_pressed := false
+var pinging := false
+var ping_count := 0
 
 
 func _ready() -> void:
 	$Button.pressed.connect(func(): click_status.text = "clicked")
+
+
+## Emits `pinged` (one argument) and `ticked` (none) every frame while
+## `pinging` is set, so a later wait_for_signal always has an emission to catch.
+func _process(_delta: float) -> void:
+	if not pinging:
+		return
+	ping_count += 1
+	pinged.emit(ping_count)
+	ticked.emit()
 
 
 func _unhandled_input(event: InputEvent) -> void:

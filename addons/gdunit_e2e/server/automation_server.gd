@@ -393,8 +393,13 @@ func _enter_wait(params: Dictionary) -> void:
 				return
 			_wait_signal_source = source
 			_wait_signal_name = sig_name
-			_wait_signal_connection = func(): _wait_signal_emitted = true
+			_wait_signal_connection = _on_wait_signal_emitted
 			if source.has_signal(sig_name):
+				# A signal passes every argument to its callables, and a callable
+				# that takes fewer fails the call. unbind(0) is itself an error.
+				var arg_count := _signal_arg_count(source, sig_name)
+				if arg_count > 0:
+					_wait_signal_connection = _wait_signal_connection.unbind(arg_count)
 				source.connect(sig_name, _wait_signal_connection, CONNECT_ONE_SHOT)
 			else:
 				_send_response({"id": _pending_id, "error": "signal_not_found", "message": "Signal '%s' not found on '%s'" % [sig_name, source_path]})
@@ -411,6 +416,17 @@ func _enter_wait(params: Dictionary) -> void:
 		_:
 			_send_response({"id": _pending_id, "error": "unknown_wait_type", "message": "Unknown wait type '%s'" % wait_type_str})
 			_transition_idle()
+
+
+func _on_wait_signal_emitted() -> void:
+	_wait_signal_emitted = true
+
+
+func _signal_arg_count(source: Object, sig_name: String) -> int:
+	for sig in source.get_signal_list():
+		if sig["name"] == sig_name:
+			return sig["args"].size()
+	return 0
 
 
 func _poll_wait(delta: float) -> void:

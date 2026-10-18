@@ -6,6 +6,9 @@ public partial class Main : Node
     [Signal]
     public delegate void PulseEventHandler();
 
+    [Signal]
+    public delegate void CountedPulseEventHandler(int count);
+
     [Export]
     public string State { get; set; } = "ready";
 
@@ -58,6 +61,13 @@ public partial class Main : Node
         await ToSignal(GetTree().CreateTimer(1.0), Godot.Timer.SignalName.Timeout);
         if (IsInsideTree())
             EmitSignal(SignalName.Pulse);
+    }
+
+    public async void TriggerCountedPulse()
+    {
+        await ToSignal(GetTree().CreateTimer(1.0), Godot.Timer.SignalName.Timeout);
+        if (IsInsideTree())
+            EmitSignal(SignalName.CountedPulse, 1);
     }
 
     public void BlockMainThread() => Thread.Sleep(System.Threading.Timeout.Infinite);
