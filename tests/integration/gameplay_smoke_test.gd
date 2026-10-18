@@ -85,6 +85,25 @@ func test_server_timeout_survives_client_deadline_race() -> void:
 	assert_array(recording_suite.failures).is_empty()
 
 
+func test_wait_for_signal_completes_with_and_without_signal_arguments() -> void:
+	var game = await _launch_game()
+	if game == null or is_failure():
+		return
+
+	assert_bool(await game.set_property("/root/Main", "pinging", true)).is_true()
+	if is_failure():
+		return
+	for signal_name in ["pinged", "ticked"]:
+		var result = await game.send_command(
+			"wait_for_signal",
+			{"path": "/root/Main", "signal_name": signal_name, "timeout": 2.0},
+			2.0 + Protocol.WAIT_MARGIN_SECONDS,
+		)
+		assert_bool(result.ok).override_failure_message(
+			"wait_for_signal('%s') failed: %s" % [signal_name, result.message]
+		).is_true()
+
+
 func _launch_game():
 	_process = E2EProcessScript.new(self)
 	add_child(_process)
