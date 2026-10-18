@@ -138,14 +138,15 @@ public class ProcessTest
     // ---- shutdown kill ----
 
     [TestCase]
-    public void TryKillTree_LeavesIncompleteTreeKillToDeathConfirmation()
+    public void TryKillTree_ReturnsIncompleteTreeKillAndIgnoresExitRaces()
     {
         // Kill(entireProcessTree: true) throws AggregateException when some
-        // descendants survive; shutdown must still reach its death check.
+        // descendants survive; shutdown keeps it to report after cleanup.
         using var self = System.Diagnostics.Process.GetCurrentProcess();
-        E2EProcess.TryKillTree(self, _ => throw new AggregateException(new InvalidOperationException()));
-        E2EProcess.TryKillTree(self, _ => throw new System.ComponentModel.Win32Exception());
-        E2EProcess.TryKillTree(self, _ => throw new InvalidOperationException());
+        var survivors = new AggregateException(new InvalidOperationException());
+        AssertThat(E2EProcess.TryKillTree(self, _ => throw survivors)).IsSame(survivors);
+        AssertThat(E2EProcess.TryKillTree(self, _ => throw new System.ComponentModel.Win32Exception())).IsNull();
+        AssertThat(E2EProcess.TryKillTree(self, _ => throw new InvalidOperationException())).IsNull();
         AssertThrown(() => E2EProcess.TryKillTree(self, _ => throw new ArgumentException()))
             .IsInstanceOf<ArgumentException>();
     }
