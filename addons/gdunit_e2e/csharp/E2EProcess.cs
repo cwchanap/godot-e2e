@@ -31,6 +31,9 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
     private CancellationTokenSource? _drainCts;
     private int _disposed;
 
+    /// <summary>Shutdown's whole-tree kill; tests substitute it to simulate surviving descendants.</summary>
+    internal Action<Process> KillTree { get; init; } = static process => process.Kill(entireProcessTree: true);
+
     public int Pid => _child?.Id ?? -1;
 
     /// <summary>Whether the owned child process has exited (owned handle, not a name scan).</summary>
@@ -289,7 +292,8 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
     /// The full shutdown path: best-effort quit when authenticated, close the
     /// client, bounded graceful wait, whole-tree kill, bounded confirmation,
     /// finish drains, delete temp files. Strict mode throws when child death
-    /// cannot be confirmed; launch-failure mode never throws.
+    /// cannot be confirmed, or after cleanup when the tree kill left
+    /// descendants behind; launch-failure mode never throws.
     /// </summary>
     private async Task ShutdownAsync(bool throwOnUnconfirmedDeath)
     {
@@ -316,15 +320,18 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
         _authenticated = false;
 
         var child = _child;
+        var pid = -1;
+        AggregateException? survivors = null;
         if (child is not null)
         {
+            pid = child.Id;
             if (!await WaitForDeathAsync(child, ShutdownGraceMillis))
             {
-                TryKillTree(child);
+                survivors = TryKillTree(child, KillTree);
                 if (!await WaitForDeathAsync(child, ShutdownGraceMillis))
                 {
                     if (throwOnUnconfirmedDeath)
-                        throw new E2EException($"Unable to confirm Godot child PID {child.Id} exited.{TailDiagnostics()}");
+                        throw new E2EException($"Unable to confirm Godot child PID {pid} exited.{TailDiagnostics()}");
                     return; // Launch-failure mode: skip cleanup of still-running state.
                 }
             }
@@ -332,6 +339,12 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
 
         await FinishDrainsAsync();
         CleanupTempFiles();
+        // Death confirmation only sees the direct child, so descendants the
+        // tree kill missed are reported here, once our own state is released.
+        if (survivors is not null && throwOnUnconfirmedDeath)
+            throw new E2EException(
+                $"Godot child PID {pid} exited, but its process tree could not be fully terminated.{TailDiagnostics()}",
+                survivors);
     }
 
     private static async Task<bool> WaitForDeathAsync(Process child, int millis)
@@ -354,22 +367,26 @@ public sealed class E2EProcess : IE2ECommandSender, IAsyncDisposable
         }
     }
 
-    private static void TryKillTree(Process child) =>
-        TryKillTree(child, process => process.Kill(entireProcessTree: true));
-
-    internal static void TryKillTree(Process child, Action<Process> kill)
+    /// <summary>
+    /// Returns the tree kill's <see cref="AggregateException"/> when some
+    /// descendants could not be terminated; an exit race returns null.
+    /// </summary>
+    internal static AggregateException? TryKillTree(Process child, Action<Process> kill)
     {
         try
         {
             kill(child);
         }
-        // AggregateException: the tree kill could not terminate every descendant.
+        catch (AggregateException e)
+        {
+            return e;
+        }
         catch (Exception e) when (e is InvalidOperationException
-            or System.ComponentModel.Win32Exception
-            or AggregateException)
+            or System.ComponentModel.Win32Exception)
         {
             // Raced an exit; death confirmation below is the source of truth.
         }
+        return null;
     }
 
     private async Task FinishDrainsAsync()

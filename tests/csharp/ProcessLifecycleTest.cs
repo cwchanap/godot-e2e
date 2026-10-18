@@ -103,6 +103,37 @@ public class ProcessLifecycleTest
     }
 
     [TestCase]
+    public async Task IncompleteTreeKill_FailsDisposeAfterCleanup()
+    {
+        // Kill(entireProcessTree: true) throws AggregateException when some
+        // descendants survive it. The direct child still dies, so dispose must
+        // report the survivors instead of passing as a clean shutdown.
+        var process = new E2EProcess
+        {
+            KillTree = child =>
+            {
+                child.Kill(entireProcessTree: true);
+                throw new AggregateException(new InvalidOperationException("descendant survived"));
+            },
+        };
+        await process.LaunchAsync(TestProject.CreateOptions());
+        var tempDir = Path.GetDirectoryName(process.PortFile!)!;
+        var blocked = await CatchAsync(() => process.SendCommandAsync(
+            "call_method",
+            Call("Main", "BlockMainThread"),
+            TimeSpan.FromSeconds(2)));
+        AssertThat(blocked).IsInstanceOf<E2EException>();
+
+        var error = await CatchAsync(() => process.DisposeAsync().AsTask());
+
+        AssertThat(error).IsInstanceOf<E2EException>();
+        AssertThat(error!.InnerException).IsInstanceOf<AggregateException>();
+        // Reported after cleanup, not instead of it.
+        AssertThat(process.HasExited).IsTrue();
+        AssertThat(Directory.Exists(tempDir)).IsFalse();
+    }
+
+    [TestCase]
     public async Task Launch_CallerCancellationIsPreservedAndChildIsReaped()
     {
         // Caller cancellation during launch (port-file polling, connect, or
